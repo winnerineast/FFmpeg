@@ -1,4 +1,6 @@
 /*
+ * HEVC shared data tables
+ *
  * This file is part of FFmpeg.
  *
  * FFmpeg is free software; you can redistribute it and/or
@@ -16,19 +18,14 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-int plan9_main(int argc, char **argv);
+#ifndef AVCODEC_HEVC_DATA_H
+#define AVCODEC_HEVC_DATA_H
 
-#undef main
-int main(int argc, char **argv)
-{
-    /* The setfcr() function in lib9 is broken, must use asm. */
-#ifdef __i386
-    short fcr;
-    __asm__ volatile ("fstcw        %0 \n"
-                      "or      $63, %0 \n"
-                      "fldcw        %0 \n"
-                      : "=m"(fcr));
-#endif
+#include <stdint.h>
 
-    return plan9_main(argc, argv);
-}
+extern const uint8_t ff_hevc_diag_scan4x4_x[16];
+extern const uint8_t ff_hevc_diag_scan4x4_y[16];
+extern const uint8_t ff_hevc_diag_scan8x8_x[64];
+extern const uint8_t ff_hevc_diag_scan8x8_y[64];
+
+#endif /* AVCODEC_HEVC_DATA_H */

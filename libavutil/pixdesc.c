@@ -2183,6 +2183,7 @@ static const char *color_primaries_names[AVCOL_PRI_NB] = {
     [AVCOL_PRI_SMPTE428] = "smpte428",
     [AVCOL_PRI_SMPTE431] = "smpte431",
     [AVCOL_PRI_SMPTE432] = "smpte432",
+    [AVCOL_PRI_JEDEC_P22] = "jedec-p22",
 };
 
 static const char *color_transfer_names[] = {
@@ -2216,7 +2217,7 @@ static const char *color_space_names[] = {
     [AVCOL_SPC_BT470BG] = "bt470bg",
     [AVCOL_SPC_SMPTE170M] = "smpte170m",
     [AVCOL_SPC_SMPTE240M] = "smpte240m",
-    [AVCOL_SPC_YCOCG] = "ycgco",
+    [AVCOL_SPC_YCGCO] = "ycgco",
     [AVCOL_SPC_BT2020_NCL] = "bt2020nc",
     [AVCOL_SPC_BT2020_CL] = "bt2020c",
     [AVCOL_SPC_SMPTE2085] = "smpte2085",

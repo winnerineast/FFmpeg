@@ -2,9 +2,6 @@
 # common bits used by all libraries
 #
 
-# first so "all" becomes default target
-all: all-yes
-
 DEFAULT_YASMD=.dbg
 
 ifeq ($(DBG),1)
@@ -74,6 +71,15 @@ COMPILE_HOSTC = $(call COMPILE,HOSTCC)
 %_host.o: %.c
 	$(COMPILE_HOSTC)
 
+%$(DEFAULT_YASMD).asm: %.asm
+	$(DEPYASM) $(YASMFLAGS) -I $(<D)/ -M -o $@ $< > $(@:.asm=.d)
+	$(YASM) $(YASMFLAGS) -I $(<D)/ -e $< | sed '/^%/d;/^$$/d;' > $@
+
+%.o: %.asm
+	$(DEPYASM) $(YASMFLAGS) -I $(<D)/ -M -o $@ $< > $(@:.o=.d)
+	$(YASM) $(YASMFLAGS) -I $(<D)/ -o $@ $(patsubst $(SRC_PATH)/%,$(SRC_LINK)/%,$<)
+	-$(if $(ASMSTRIPFLAGS), $(STRIP) $(ASMSTRIPFLAGS) $@)
+
 %.o: %.rc
 	$(WINDRES) $(IFLAGS) --preprocessor "$(DEPWINDRES) -E -xc-header -DRC_INVOKED $(CC_DEPFLAGS)" -o $@ $<
 
@@ -97,7 +103,7 @@ COMPILE_HOSTC = $(call COMPILE,HOSTCC)
 $(OBJS):
 endif
 
-include $(SRC_PATH)/arch.mak
+include $(SRC_PATH)/ffbuild/arch.mak
 
 OBJS      += $(OBJS-yes)
 SLIBOBJS  += $(SLIBOBJS-yes)
@@ -127,6 +133,7 @@ ALLHEADERS := $(subst $(SRC_DIR)/,$(SUBDIR),$(wildcard $(SRC_DIR)/*.h $(SRC_DIR)
 SKIPHEADERS += $(ARCH_HEADERS:%=$(ARCH)/%) $(SKIPHEADERS-)
 SKIPHEADERS := $(SKIPHEADERS:%=$(SUBDIR)%)
 HOBJS        = $(filter-out $(SKIPHEADERS:.h=.h.o),$(ALLHEADERS:.h=.h.o))
+$(HOBJS):     CCFLAGS += $(CFLAGS_HEADERS)
 checkheaders: $(HOBJS)
 .SECONDARY:   $(HOBJS:.o=.c)
 
@@ -136,7 +143,7 @@ $(HOSTOBJS): %.o: %.c
 	$(COMPILE_HOSTC)
 
 $(HOSTPROGS): %$(HOSTEXESUF): %.o
-	$(HOSTLD) $(HOSTLDFLAGS) $(HOSTLD_O) $^ $(HOSTLIBS)
+	$(HOSTLD) $(HOSTLDFLAGS) $(HOSTLD_O) $^ $(HOSTEXTRALIBS)
 
 $(OBJS):     | $(sort $(dir $(OBJS)))
 $(HOBJS):    | $(sort $(dir $(HOBJS)))

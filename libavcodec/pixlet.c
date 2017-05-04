@@ -173,7 +173,7 @@ static int read_low_coeffs(AVCodecContext *avctx, int16_t *dst, int size, int wi
             }
         }
 
-        if (i + rlen > size)
+        if (rlen > size - i)
             return AVERROR_INVALIDDATA;
         i += rlen;
 
@@ -324,7 +324,8 @@ static int read_highpass(AVCodecContext *avctx, uint8_t *ptr, int plane, AVFrame
 
         magic = bytestream2_get_be32(&ctx->gb);
         if (magic != 0xDEADBEEF) {
-            av_log(avctx, AV_LOG_ERROR, "wrong magic number: 0x%08X for plane %d, band %d\n", magic, plane, i);
+            av_log(avctx, AV_LOG_ERROR, "wrong magic number: 0x%08"PRIX32
+                   " for plane %d, band %d\n", magic, plane, i);
             return AVERROR_INVALIDDATA;
         }
 
@@ -575,7 +576,7 @@ static int pixlet_decode_frame(AVCodecContext *avctx, void *data,
 
     pktsize = bytestream2_get_be32(&ctx->gb);
     if (pktsize <= 44 || pktsize - 4 > bytestream2_get_bytes_left(&ctx->gb)) {
-        av_log(avctx, AV_LOG_ERROR, "Invalid packet size %u.\n", pktsize);
+        av_log(avctx, AV_LOG_ERROR, "Invalid packet size %"PRIu32"\n", pktsize);
         return AVERROR_INVALIDDATA;
     }
 

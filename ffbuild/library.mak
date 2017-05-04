@@ -1,4 +1,4 @@
-include $(SRC_PATH)/common.mak
+include $(SRC_PATH)/ffbuild/common.mak
 
 LIBVERSION := $(lib$(NAME)_VERSION)
 LIBMAJOR   := $(lib$(NAME)_VERSION_MAJOR)
@@ -9,15 +9,6 @@ INSTHEADERS := $(INSTHEADERS) $(HEADERS:%=$(SUBDIR)%)
 
 all-$(CONFIG_STATIC): $(SUBDIR)$(LIBNAME)
 all-$(CONFIG_SHARED): $(SUBDIR)$(SLIBNAME)
-
-$(SUBDIR)x86/%$(DEFAULT_YASMD).asm: $(SUBDIR)x86/%.asm
-	$(DEPYASM) $(YASMFLAGS) -I $(<D)/ -M -o $@ $< > $(@:.asm=.d)
-	$(YASM) $(YASMFLAGS) -I $(<D)/ -e $< | sed '/^%/d;/^$$/d;' > $@
-
-$(SUBDIR)x86/%.o: $(SUBDIR)x86/%$(YASMD).asm
-	$(DEPYASM) $(YASMFLAGS) -I $(<D)/ -M -o $@ $< > $(@:.o=.d)
-	$(YASM) $(YASMFLAGS) -I $(<D)/ -o $@ $(patsubst $(SRC_PATH)/%,$(SRC_LINK)/%,$<)
-	-$(if $(ASMSTRIPFLAGS), $(STRIP) $(ASMSTRIPFLAGS) $@)
 
 LIBOBJS := $(OBJS) $(SUBDIR)%.h.o $(TESTOBJS)
 $(LIBOBJS) $(LIBOBJS:.o=.s) $(LIBOBJS:.o=.i):   CPPFLAGS += -DHAVE_AV_CONFIG_H
@@ -37,7 +28,7 @@ define RULES
 $(TOOLS):     THISLIB = $(FULLNAME:%=$(LD_LIB))
 $(TESTPROGS): THISLIB = $(SUBDIR)$(LIBNAME)
 
-$(TESTPROGS) $(TOOLS): %$(EXESUF): %.o $(EXEOBJS)
+$(TESTPROGS) $(TOOLS): %$(EXESUF): %.o
 	$$(LD) $(LDFLAGS) $(LDEXEFLAGS) $$(LD_O) $$(filter %.o,$$^) $$(THISLIB) $(FFEXTRALIBS) $$(ELIBS)
 
 $(SUBDIR)lib$(NAME).ver: $(SUBDIR)lib$(NAME).v $(OBJS)

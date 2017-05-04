@@ -374,6 +374,7 @@ const char *av_packet_side_data_name(enum AVPacketSideDataType type)
     case AV_PKT_DATA_METADATA_UPDATE:            return "Metadata Update";
     case AV_PKT_DATA_MPEGTS_STREAM_ID:           return "MPEGTS Stream ID";
     case AV_PKT_DATA_MASTERING_DISPLAY_METADATA: return "Mastering display metadata";
+    case AV_PKT_DATA_CONTENT_LIGHT_LEVEL:        return "Content light level metadata";
     case AV_PKT_DATA_SPHERICAL:                  return "Spherical Mapping";
     }
     return NULL;
@@ -614,7 +615,7 @@ fail:
     return ret;
 }
 
-AVPacket *av_packet_clone(AVPacket *src)
+AVPacket *av_packet_clone(const AVPacket *src)
 {
     AVPacket *ret = av_packet_alloc();
 

@@ -168,11 +168,13 @@ static inline int decode_vui_parameters(GetBitContext *gb, AVCodecContext *avctx
             sps->color_primaries = get_bits(gb, 8); /* colour_primaries */
             sps->color_trc       = get_bits(gb, 8); /* transfer_characteristics */
             sps->colorspace      = get_bits(gb, 8); /* matrix_coefficients */
-            if (sps->color_primaries >= AVCOL_PRI_NB)
+
+            // Set invalid values to "unspecified"
+            if (!av_color_primaries_name(sps->color_primaries))
                 sps->color_primaries = AVCOL_PRI_UNSPECIFIED;
-            if (sps->color_trc >= AVCOL_TRC_NB)
+            if (!av_color_transfer_name(sps->color_trc))
                 sps->color_trc = AVCOL_TRC_UNSPECIFIED;
-            if (sps->colorspace >= AVCOL_SPC_NB)
+            if (!av_color_space_name(sps->colorspace))
                 sps->colorspace = AVCOL_SPC_UNSPECIFIED;
         }
     }
@@ -774,8 +776,8 @@ int ff_h264_decode_picture_parameter_set(GetBitContext *gb, AVCodecContext *avct
         ret = AVERROR_INVALIDDATA;
         goto fail;
     } else if (sps->bit_depth_luma == 11 || sps->bit_depth_luma == 13) {
-        av_log(avctx, AV_LOG_ERROR,
-               "Unimplemented luma bit depth=%d\n",
+        avpriv_report_missing_feature(avctx,
+               "Unimplemented luma bit depth=%d",
                sps->bit_depth_luma);
         ret = AVERROR_PATCHWELCOME;
         goto fail;
@@ -800,8 +802,8 @@ int ff_h264_decode_picture_parameter_set(GetBitContext *gb, AVCodecContext *avct
 
     pps->weighted_pred                        = get_bits1(gb);
     pps->weighted_bipred_idc                  = get_bits(gb, 2);
-    pps->init_qp                              = get_se_golomb(gb) + 26 + qp_bd_offset;
-    pps->init_qs                              = get_se_golomb(gb) + 26 + qp_bd_offset;
+    pps->init_qp                              = get_se_golomb(gb) + 26U + qp_bd_offset;
+    pps->init_qs                              = get_se_golomb(gb) + 26U + qp_bd_offset;
     pps->chroma_qp_index_offset[0]            = get_se_golomb(gb);
     if (pps->chroma_qp_index_offset[0] < -12 || pps->chroma_qp_index_offset[0] > 12) {
         ret = AVERROR_INVALIDDATA;

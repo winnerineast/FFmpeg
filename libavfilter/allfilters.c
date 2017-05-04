@@ -79,7 +79,6 @@ static void register_all(void)
     REGISTER_FILTER(ASPLIT,         asplit,         af);
     REGISTER_FILTER(ASTATS,         astats,         af);
     REGISTER_FILTER(ASTREAMSELECT,  astreamselect,  af);
-    REGISTER_FILTER(ASYNCTS,        asyncts,        af);
     REGISTER_FILTER(ATEMPO,         atempo,         af);
     REGISTER_FILTER(ATRIM,          atrim,          af);
     REGISTER_FILTER(AZMQ,           azmq,           af);
@@ -167,6 +166,7 @@ static void register_all(void)
     REGISTER_FILTER(DEBAND,         deband,         vf);
     REGISTER_FILTER(DECIMATE,       decimate,       vf);
     REGISTER_FILTER(DEFLATE,        deflate,        vf);
+    REGISTER_FILTER(DEFLICKER,      deflicker,      vf);
     REGISTER_FILTER(DEINTERLACE_QSV,deinterlace_qsv,vf);
     REGISTER_FILTER(DEINTERLACE_VAAPI, deinterlace_vaapi, vf);
     REGISTER_FILTER(DEJUDDER,       dejudder,       vf);
@@ -175,6 +175,7 @@ static void register_all(void)
     REGISTER_FILTER(DETELECINE,     detelecine,     vf);
     REGISTER_FILTER(DILATION,       dilation,       vf);
     REGISTER_FILTER(DISPLACE,       displace,       vf);
+    REGISTER_FILTER(DOUBLEWEAVE,    doubleweave,    vf);
     REGISTER_FILTER(DRAWBOX,        drawbox,        vf);
     REGISTER_FILTER(DRAWGRAPH,      drawgraph,      vf);
     REGISTER_FILTER(DRAWGRID,       drawgrid,       vf);
@@ -210,6 +211,7 @@ static void register_all(void)
     REGISTER_FILTER(HSTACK,         hstack,         vf);
     REGISTER_FILTER(HUE,            hue,            vf);
     REGISTER_FILTER(HWDOWNLOAD,     hwdownload,     vf);
+    REGISTER_FILTER(HWMAP,          hwmap,          vf);
     REGISTER_FILTER(HWUPLOAD,       hwupload,       vf);
     REGISTER_FILTER(HWUPLOAD_CUDA,  hwupload_cuda,  vf);
     REGISTER_FILTER(HYSTERESIS,     hysteresis,     vf);
@@ -221,6 +223,7 @@ static void register_all(void)
     REGISTER_FILTER(KERNDEINT,      kerndeint,      vf);
     REGISTER_FILTER(LENSCORRECTION, lenscorrection, vf);
     REGISTER_FILTER(LOOP,           loop,           vf);
+    REGISTER_FILTER(LUMAKEY,        lumakey,        vf);
     REGISTER_FILTER(LUT,            lut,            vf);
     REGISTER_FILTER(LUT2,           lut2,           vf);
     REGISTER_FILTER(LUT3D,          lut3d,          vf);
@@ -243,6 +246,7 @@ static void register_all(void)
     REGISTER_FILTER(NULL,           null,           vf);
     REGISTER_FILTER(OCR,            ocr,            vf);
     REGISTER_FILTER(OCV,            ocv,            vf);
+    REGISTER_FILTER(OSCILLOSCOPE,   oscilloscope,   vf);
     REGISTER_FILTER(OVERLAY,        overlay,        vf);
     REGISTER_FILTER(OWDENOISE,      owdenoise,      vf);
     REGISTER_FILTER(PAD,            pad,            vf);
@@ -252,6 +256,7 @@ static void register_all(void)
     REGISTER_FILTER(PERSPECTIVE,    perspective,    vf);
     REGISTER_FILTER(PHASE,          phase,          vf);
     REGISTER_FILTER(PIXDESCTEST,    pixdesctest,    vf);
+    REGISTER_FILTER(PIXSCOPE,       pixscope,       vf);
     REGISTER_FILTER(PP,             pp,             vf);
     REGISTER_FILTER(PP7,            pp7,            vf);
     REGISTER_FILTER(PREMULTIPLY,    premultiply,    vf);

@@ -460,7 +460,7 @@ static int configure_output_video_filter(FilterGraph *fg, OutputFilter *ofilter,
     if (ret < 0)
         return ret;
 
-    if (!hw_device_ctx && (ofilter->width || ofilter->height)) {
+    if (ofilter->width || ofilter->height) {
         char args[255];
         AVFilterContext *filter;
         AVDictionaryEntry *e = NULL;
@@ -1162,7 +1162,7 @@ int ifilter_parameters_from_frame(InputFilter *ifilter, const AVFrame *frame)
     ifilter->sample_aspect_ratio = frame->sample_aspect_ratio;
 
     ifilter->sample_rate         = frame->sample_rate;
-    ifilter->channels            = av_frame_get_channels(frame);
+    ifilter->channels            = frame->channels;
     ifilter->channel_layout      = frame->channel_layout;
 
     if (frame->hw_frames_ctx) {
