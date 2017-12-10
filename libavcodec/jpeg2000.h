@@ -168,12 +168,12 @@ typedef struct Jpeg2000Cblk {
     uint16_t lengthinc[JPEG2000_MAX_PASSES];
     uint8_t nb_lengthinc;
     uint8_t lblock;
-    uint8_t zero;
-    uint8_t data[8192];
+    uint8_t *data;
+    size_t data_allocated;
     int nb_terminations;
     int nb_terminationsinc;
     int data_start[JPEG2000_MAX_PASSES];
-    Jpeg2000Pass passes[JPEG2000_MAX_PASSES];
+    Jpeg2000Pass *passes;
     int coord[2][2]; // border coordinates {{x0, x1}, {y0, y1}}
 } Jpeg2000Cblk; // code block
 
@@ -215,12 +215,12 @@ typedef struct Jpeg2000Component {
 /* misc tools */
 static inline int ff_jpeg2000_ceildivpow2(int a, int b)
 {
-    return -(((int64_t)(-a)) >> b);
+    return -((-(int64_t)a) >> b);
 }
 
 static inline int ff_jpeg2000_ceildiv(int a, int b)
 {
-    return (a + b - 1) / b;
+    return (a + (int64_t)b - 1) / b;
 }
 
 /* TIER-1 routines */

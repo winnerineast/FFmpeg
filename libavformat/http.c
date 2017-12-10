@@ -66,6 +66,7 @@ typedef struct HTTPContext {
     int http_code;
     /* Used if "Transfer-Encoding: chunked" otherwise -1. */
     uint64_t chunksize;
+    int chunkend;
     uint64_t off, end_off, filesize;
     char *location;
     HTTPAuthState auth_state;
@@ -170,6 +171,7 @@ static int http_connect(URLContext *h, const char *path, const char *local_path,
                         const char *hoststr, const char *auth,
                         const char *proxyauth, int *new_location);
 static int http_read_header(URLContext *h, int *new_location);
+static int http_shutdown(URLContext *h, int flags);
 
 void ff_http_init_auth_state(URLContext *dest, const URLContext *src)
 {
@@ -305,6 +307,12 @@ int ff_http_do_new_request(URLContext *h, const char *uri)
     AVDictionary *options = NULL;
     int ret;
 
+    ret = http_shutdown(h, h->flags);
+    if (ret < 0)
+        return ret;
+
+    s->end_chunked_post = 0;
+    s->chunkend      = 0;
     s->off           = 0;
     s->icy_data_read = 0;
     av_free(s->location);
@@ -1248,6 +1256,9 @@ static int http_connect(URLContext *h, const char *path, const char *local_path,
     s->willclose        = 0;
     s->end_chunked_post = 0;
     s->end_header       = 0;
+#if CONFIG_ZLIB
+    s->compressed       = 0;
+#endif
     if (post && !s->post_data && !send_expect_100) {
         /* Pretend that it did work. We didn't read any header yet, since
          * we've still to send the POST data, but the code calling this
@@ -1278,6 +1289,9 @@ static int http_buf_read(URLContext *h, uint8_t *buf, int size)
     int len;
 
     if (s->chunksize != UINT64_MAX) {
+        if (s->chunkend) {
+            return AVERROR_EOF;
+        }
         if (!s->chunksize) {
             char line[32];
             int err;
@@ -1290,11 +1304,19 @@ static int http_buf_read(URLContext *h, uint8_t *buf, int size)
             s->chunksize = strtoull(line, NULL, 16);
 
             av_log(h, AV_LOG_TRACE,
-                   "Chunked encoding data size: %"PRIu64"'\n",
+                   "Chunked encoding data size: %"PRIu64"\n",
                     s->chunksize);
 
-            if (!s->chunksize)
+            if (!s->chunksize && s->multiple_requests) {
+                http_get_line(s, line, sizeof(line)); // read empty chunk
+                s->chunkend = 1;
                 return 0;
+            }
+            else if (!s->chunksize) {
+                av_log(h, AV_LOG_DEBUG, "Last chunk received, closing conn\n");
+                ffurl_closep(&s->hd);
+                return 0;
+            }
             else if (s->chunksize == UINT64_MAX) {
                 av_log(h, AV_LOG_ERROR, "Invalid chunk size %"PRIu64"\n",
                        s->chunksize);
@@ -1326,7 +1348,7 @@ static int http_buf_read(URLContext *h, uint8_t *buf, int size)
     }
     if (len > 0) {
         s->off += len;
-        if (s->chunksize > 0) {
+        if (s->chunksize > 0 && s->chunksize != UINT64_MAX) {
             av_assert0(s->chunksize >= len);
             s->chunksize -= len;
         }

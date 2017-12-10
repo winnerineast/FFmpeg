@@ -111,7 +111,7 @@ struct playlist {
     int start_seq_no;
     int n_segments;
     struct segment **segments;
-    int needed, cur_needed;
+    int needed;
     int cur_seq_no;
     int64_t cur_seg_offset;
     int64_t last_load_time;
@@ -204,6 +204,8 @@ typedef struct HLSContext {
     char *http_proxy;                    ///< holds the address of the HTTP proxy server
     AVDictionary *avio_opts;
     int strict_std_compliance;
+    char *allowed_extensions;
+    int max_reload;
 } HLSContext;
 
 static int read_chomp_line(AVIOContext *s, char *buf, int maxlen)
@@ -618,8 +620,19 @@ static int open_url(AVFormatContext *s, AVIOContext **pb, const char *url,
         return AVERROR_INVALIDDATA;
 
     // only http(s) & file are allowed
-    if (!av_strstart(proto_name, "http", NULL) && !av_strstart(proto_name, "file", NULL))
+    if (av_strstart(proto_name, "file", NULL)) {
+        if (strcmp(c->allowed_extensions, "ALL") && !av_match_ext(url, c->allowed_extensions)) {
+            av_log(s, AV_LOG_ERROR,
+                "Filename extension of \'%s\' is not a common multimedia extension, blocked for security reasons.\n"
+                "If you wish to override this adjust allowed_extensions, you can set it to \'ALL\' to allow all\n",
+                url);
+            return AVERROR_INVALIDDATA;
+        }
+    } else if (av_strstart(proto_name, "http", NULL)) {
+        ;
+    } else
         return AVERROR_INVALIDDATA;
+
     if (!strncmp(proto_name, url, strlen(proto_name)) && url[strlen(proto_name)] == ':')
         ;
     else if (av_strstart(url, "crypto", NULL) && !strncmp(proto_name, url + 7, strlen(proto_name)) && url[7 + strlen(proto_name)] == ':')
@@ -630,8 +643,16 @@ static int open_url(AVFormatContext *s, AVIOContext **pb, const char *url,
     ret = s->io_open(s, pb, url, AVIO_FLAG_READ, &tmp);
     if (ret >= 0) {
         // update cookies on http response with setcookies.
-        void *u = (s->flags & AVFMT_FLAG_CUSTOM_IO) ? NULL : s->pb;
-        update_options(&c->cookies, "cookies", u);
+        char *new_cookies = NULL;
+
+        if (!(s->flags & AVFMT_FLAG_CUSTOM_IO))
+            av_opt_get(*pb, "cookies", AV_OPT_SEARCH_CHILDREN, (uint8_t**)&new_cookies);
+
+        if (new_cookies) {
+            av_free(c->cookies);
+            c->cookies = new_cookies;
+        }
+
         av_dict_set(&opts, "cookies", c->cookies, 0);
     }
 
@@ -1237,12 +1258,59 @@ static int64_t default_reload_interval(struct playlist *pls)
                           pls->target_duration;
 }
 
+static int playlist_needed(struct playlist *pls)
+{
+    AVFormatContext *s = pls->parent;
+    int i, j;
+    int stream_needed = 0;
+    int first_st;
+
+    /* If there is no context or streams yet, the playlist is needed */
+    if (!pls->ctx || !pls->n_main_streams)
+        return 1;
+
+    /* check if any of the streams in the playlist are needed */
+    for (i = 0; i < pls->n_main_streams; i++) {
+        if (pls->main_streams[i]->discard < AVDISCARD_ALL) {
+            stream_needed = 1;
+            break;
+        }
+    }
+
+    /* If all streams in the playlist were discarded, the playlist is not
+     * needed (regardless of whether whole programs are discarded or not). */
+    if (!stream_needed)
+        return 0;
+
+    /* Otherwise, check if all the programs (variants) this playlist is in are
+     * discarded. Since all streams in the playlist are part of the same programs
+     * we can just check the programs of the first stream. */
+
+    first_st = pls->main_streams[0]->index;
+
+    for (i = 0; i < s->nb_programs; i++) {
+        AVProgram *program = s->programs[i];
+        if (program->discard < AVDISCARD_ALL) {
+            for (j = 0; j < program->nb_stream_indexes; j++) {
+                if (program->stream_index[j] == first_st) {
+                    /* playlist is in an undiscarded program */
+                    return 1;
+                }
+            }
+        }
+    }
+
+    /* some streams were not discarded but all the programs were */
+    return 0;
+}
+
 static int read_data(void *opaque, uint8_t *buf, int buf_size)
 {
     struct playlist *v = opaque;
     HLSContext *c = v->parent->priv_data;
-    int ret, i;
+    int ret;
     int just_opened = 0;
+    int reload_count = 0;
 
 restart:
     if (!v->needed)
@@ -1254,15 +1322,8 @@ restart:
 
         /* Check that the playlist is still needed before opening a new
          * segment. */
-        if (v->ctx && v->ctx->nb_streams) {
-            v->needed = 0;
-            for (i = 0; i < v->n_main_streams; i++) {
-                if (v->main_streams[i]->discard < AVDISCARD_ALL) {
-                    v->needed = 1;
-                    break;
-                }
-            }
-        }
+        v->needed = playlist_needed(v);
+
         if (!v->needed) {
             av_log(v->parent, AV_LOG_INFO, "No longer receiving playlist %d\n",
                 v->index);
@@ -1274,6 +1335,9 @@ restart:
         reload_interval = default_reload_interval(v);
 
 reload:
+        reload_count++;
+        if (reload_count > c->max_reload)
+            return AVERROR_EOF;
         if (!v->finished &&
             av_gettime_relative() - v->last_load_time >= reload_interval) {
             if ((ret = parse_playlist(c, v->url, v, NULL)) < 0) {
@@ -1473,9 +1537,9 @@ static int select_cur_seq_no(HLSContext *c, struct playlist *pls)
 static int save_avio_options(AVFormatContext *s)
 {
     HLSContext *c = s->priv_data;
-    static const char *opts[] = {
+    static const char * const opts[] = {
         "headers", "http_proxy", "user_agent", "user-agent", "cookies", NULL };
-    const char **opt = opts;
+    const char * const * opt = opts;
     uint8_t *buf;
     int ret = 0;
 
@@ -1761,7 +1825,7 @@ static int hls_read_header(AVFormatContext *s)
         }
         pls->ctx->pb       = &pls->pb;
         pls->ctx->io_open  = nested_io_open;
-        pls->ctx->flags   |= s->flags;
+        pls->ctx->flags   |= s->flags & ~AVFMT_FLAG_CUSTOM_IO;
 
         if ((ret = ff_copy_whiteblacklists(pls->ctx, s)) < 0)
             goto fail;
@@ -1816,20 +1880,15 @@ static int recheck_discard_flags(AVFormatContext *s, int first)
 {
     HLSContext *c = s->priv_data;
     int i, changed = 0;
+    int cur_needed;
 
     /* Check if any new streams are needed */
-    for (i = 0; i < c->n_playlists; i++)
-        c->playlists[i]->cur_needed = 0;
-
-    for (i = 0; i < s->nb_streams; i++) {
-        AVStream *st = s->streams[i];
-        struct playlist *pls = c->playlists[s->streams[i]->id];
-        if (st->discard < AVDISCARD_ALL)
-            pls->cur_needed = 1;
-    }
     for (i = 0; i < c->n_playlists; i++) {
         struct playlist *pls = c->playlists[i];
-        if (pls->cur_needed && !pls->needed) {
+
+        cur_needed = playlist_needed(c->playlists[i]);
+
+        if (cur_needed && !pls->needed) {
             pls->needed = 1;
             changed = 1;
             pls->cur_seq_no = select_cur_seq_no(c, pls);
@@ -1841,7 +1900,7 @@ static int recheck_discard_flags(AVFormatContext *s, int first)
                 pls->seek_stream_index = -1;
             }
             av_log(s, AV_LOG_INFO, "Now receiving playlist %d, segment %d\n", i, pls->cur_seq_no);
-        } else if (first && !pls->cur_needed && pls->needed) {
+        } else if (first && !cur_needed && pls->needed) {
             if (pls->input)
                 ff_format_io_close(pls->parent, &pls->input);
             pls->needed = 0;
@@ -2126,6 +2185,12 @@ static int hls_probe(AVProbeData *p)
 static const AVOption hls_options[] = {
     {"live_start_index", "segment index to start live streams at (negative values are from the end)",
         OFFSET(live_start_index), AV_OPT_TYPE_INT, {.i64 = -3}, INT_MIN, INT_MAX, FLAGS},
+    {"allowed_extensions", "List of file extensions that hls is allowed to access",
+        OFFSET(allowed_extensions), AV_OPT_TYPE_STRING,
+        {.str = "3gp,aac,avi,flac,mkv,m3u8,m4a,m4s,m4v,mpg,mov,mp2,mp3,mp4,mpeg,mpegts,ogg,ogv,oga,ts,vob,wav"},
+        INT_MIN, INT_MAX, FLAGS},
+    {"max_reload", "Maximum number of times a insufficient list is attempted to be reloaded",
+        OFFSET(max_reload), AV_OPT_TYPE_INT, {.i64 = 1000}, 0, INT_MAX, FLAGS},
     {NULL}
 };
 

@@ -121,12 +121,6 @@ struct AVFormatInternal {
     int avoid_negative_ts_use_pts;
 
     /**
-     * Whether or not a header has already been written
-     */
-    int header_written;
-    int write_header_ret;
-
-    /**
      * Timestamp of the end of the shortest stream.
      */
     int64_t shortest_end;
@@ -145,6 +139,11 @@ struct AVFormatInternal {
      * ID3v2 tag useful for MP3 demuxing
      */
     AVDictionary *id3v2_meta;
+
+    /*
+     * Prefer the codec framerate for avg_frame_rate computation.
+     */
+    int prefer_codec_framerate;
 };
 
 struct AVStreamInternal {
@@ -191,6 +190,8 @@ struct AVStreamInternal {
      * Whether the internal avctx needs to be updated from codecpar (after a late change to codecpar)
      */
     int need_context_update;
+
+    FFFrac *priv_pts;
 };
 
 #ifdef __GNUC__
