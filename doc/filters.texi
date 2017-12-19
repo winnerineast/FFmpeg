@@ -1136,6 +1136,23 @@ Specify the band-width of a filter in width_type units.
 Specify which channels to filter, by default all available are filtered.
 @end table
 
+@subsection Commands
+
+This filter supports the following commands:
+@table @option
+@item frequency, f
+Change allpass frequency.
+Syntax for the command is : "@var{frequency}"
+
+@item width_type, t
+Change allpass width_type.
+Syntax for the command is : "@var{width_type}"
+
+@item width, w
+Change allpass width.
+Syntax for the command is : "@var{width}"
+@end table
+
 @section aloop
 
 Loop audio samples.
@@ -1876,6 +1893,23 @@ Specify the band-width of a filter in width_type units.
 Specify which channels to filter, by default all available are filtered.
 @end table
 
+@subsection Commands
+
+This filter supports the following commands:
+@table @option
+@item frequency, f
+Change bandpass frequency.
+Syntax for the command is : "@var{frequency}"
+
+@item width_type, t
+Change bandpass width_type.
+Syntax for the command is : "@var{width_type}"
+
+@item width, w
+Change bandpass width.
+Syntax for the command is : "@var{width}"
+@end table
+
 @section bandreject
 
 Apply a two-pole Butterworth band-reject filter with central
@@ -1906,6 +1940,23 @@ Specify the band-width of a filter in width_type units.
 
 @item channels, c
 Specify which channels to filter, by default all available are filtered.
+@end table
+
+@subsection Commands
+
+This filter supports the following commands:
+@table @option
+@item frequency, f
+Change bandreject frequency.
+Syntax for the command is : "@var{frequency}"
+
+@item width_type, t
+Change bandreject width_type.
+Syntax for the command is : "@var{width_type}"
+
+@item width, w
+Change bandreject width.
+Syntax for the command is : "@var{width}"
 @end table
 
 @section bass
@@ -1947,6 +1998,27 @@ Determine how steep is the filter's shelf transition.
 Specify which channels to filter, by default all available are filtered.
 @end table
 
+@subsection Commands
+
+This filter supports the following commands:
+@table @option
+@item frequency, f
+Change bass frequency.
+Syntax for the command is : "@var{frequency}"
+
+@item width_type, t
+Change bass width_type.
+Syntax for the command is : "@var{width_type}"
+
+@item width, w
+Change bass width.
+Syntax for the command is : "@var{width}"
+
+@item gain, g
+Change bass gain.
+Syntax for the command is : "@var{gain}"
+@end table
+
 @section biquad
 
 Apply a biquad IIR filter with the given coefficients.
@@ -1954,6 +2026,20 @@ Where @var{b0}, @var{b1}, @var{b2} and @var{a0}, @var{a1}, @var{a2}
 are the numerator and denominator coefficients respectively.
 and @var{channels}, @var{c} specify which channels to filter, by default all
 available are filtered.
+
+@subsection Commands
+
+This filter supports the following commands:
+@table @option
+@item a0
+@item a1
+@item a2
+@item b0
+@item b1
+@item b2
+Change biquad parameter.
+Syntax for the command is : "@var{value}"
+@end table
 
 @section bs2b
 Bauer stereo to binaural transformation, which improves headphone listening of
@@ -2584,6 +2670,27 @@ equalizer=f=1000:t=q:w=1:g=2,equalizer=f=100:t=q:w=2:g=-5
 @end example
 @end itemize
 
+@subsection Commands
+
+This filter supports the following commands:
+@table @option
+@item frequency, f
+Change equalizer frequency.
+Syntax for the command is : "@var{frequency}"
+
+@item width_type, t
+Change equalizer width_type.
+Syntax for the command is : "@var{width_type}"
+
+@item width, w
+Change equalizer width.
+Syntax for the command is : "@var{width}"
+
+@item gain, g
+Change equalizer gain.
+Syntax for the command is : "@var{gain}"
+@end table
+
 @section extrastereo
 
 Linearly increases the difference between left and right channels which
@@ -2983,6 +3090,23 @@ The default is 0.707q and gives a Butterworth response.
 Specify which channels to filter, by default all available are filtered.
 @end table
 
+@subsection Commands
+
+This filter supports the following commands:
+@table @option
+@item frequency, f
+Change highpass frequency.
+Syntax for the command is : "@var{frequency}"
+
+@item width_type, t
+Change highpass width_type.
+Syntax for the command is : "@var{width_type}"
+
+@item width, w
+Change highpass width.
+Syntax for the command is : "@var{width}"
+@end table
+
 @section join
 
 Join multiple input streams into one multi-channel stream.
@@ -3280,6 +3404,23 @@ Lowpass only LFE channel, it LFE is not present it does nothing:
 lowpass=c=LFE
 @end example
 @end itemize
+
+@subsection Commands
+
+This filter supports the following commands:
+@table @option
+@item frequency, f
+Change lowpass frequency.
+Syntax for the command is : "@var{frequency}"
+
+@item width_type, t
+Change lowpass width_type.
+Syntax for the command is : "@var{width_type}"
+
+@item width, w
+Change lowpass width.
+Syntax for the command is : "@var{width}"
+@end table
 
 @section lv2
 
@@ -4160,6 +4301,27 @@ Determine how steep is the filter's shelf transition.
 
 @item channels, c
 Specify which channels to filter, by default all available are filtered.
+@end table
+
+@subsection Commands
+
+This filter supports the following commands:
+@table @option
+@item frequency, f
+Change treble frequency.
+Syntax for the command is : "@var{frequency}"
+
+@item width_type, t
+Change treble width_type.
+Syntax for the command is : "@var{width_type}"
+
+@item width, w
+Change treble width.
+Syntax for the command is : "@var{width}"
+
+@item gain, g
+Change treble gain.
+Syntax for the command is : "@var{gain}"
 @end table
 
 @section tremolo
@@ -7146,6 +7308,11 @@ The expression which sets the thickness of the box edge.
 A value of @code{fill} will create a filled box. Default value is @code{3}.
 
 See below for the list of accepted constants.
+
+@item replace
+Applicable if the input has alpha. With value @code{1}, the pixels of the painted box
+will overwrite the video's color and alpha pixels.
+Default is @code{0}, which composites the box onto the input, leaving the video's alpha intact.
 @end table
 
 The parameters for @var{x}, @var{y}, @var{w} and @var{h} and @var{t} are expressions containing the
@@ -7243,6 +7410,11 @@ video with inverted luma.
 The expression which sets the thickness of the grid line. Default value is @code{1}.
 
 See below for the list of accepted constants.
+
+@item replace
+Applicable if the input has alpha. With @code{1} the pixels of the painted grid
+will overwrite the video's color and alpha pixels.
+Default is @code{0}, which composites the grid onto the input, leaving the video's alpha intact.
 @end table
 
 The parameters for @var{x}, @var{y}, @var{w} and @var{h} and @var{t} are expressions containing the
@@ -11328,6 +11500,10 @@ Default value is @samp{yuv420}.
 
 @item repeatlast
 See @ref{framesync}.
+
+@item alpha
+Set format of alpha of the overlaid video, it can be @var{straight} or
+@var{premultiplied}. Default is @var{straight}.
 @end table
 
 The @option{x}, and @option{y} expressions can contain the following
@@ -17099,28 +17275,24 @@ The sources accept the following parameters:
 
 @table @option
 
-@item alpha
-Specify the alpha (opacity) of the background, only available in the
-@code{testsrc2} source. The value must be between 0 (fully transparent) and
-255 (fully opaque, the default).
-
-@item color, c
-Specify the color of the source, only available in the @code{color}
-source. For the syntax of this option, check the "Color" section in the
-ffmpeg-utils manual.
-
 @item level
 Specify the level of the Hald CLUT, only available in the @code{haldclutsrc}
 source. A level of @code{N} generates a picture of @code{N*N*N} by @code{N*N*N}
 pixels to be used as identity matrix for 3D lookup tables. Each component is
 coded on a @code{1/(N*N)} scale.
 
+@item color, c
+Specify the color of the source, only available in the @code{color}
+source. For the syntax of this option, check the "Color" section in the
+ffmpeg-utils manual.
+
 @item size, s
 Specify the size of the sourced video. For the syntax of this option, check the
 @ref{video size syntax,,"Video size" section in the ffmpeg-utils manual,ffmpeg-utils}.
 The default value is @code{320x240}.
 
-This option is not available with the @code{haldclutsrc} filter.
+This option is not available with the @code{allrgb}, @code{allyuv}, and
+@code{haldclutsrc} filters.
 
 @item rate, r
 Specify the frame rate of the sourced video, as the number of frames
@@ -17129,9 +17301,6 @@ generated per second. It has to be a string in the format
 number or a valid video frame rate abbreviation. The default value is
 "25".
 
-@item sar
-Set the sample aspect ratio of the sourced video.
-
 @item duration, d
 Set the duration of the sourced video. See
 @ref{time duration syntax,,the Time duration section in the ffmpeg-utils(1) manual,ffmpeg-utils}
@@ -17139,6 +17308,14 @@ for the accepted syntax.
 
 If not specified, or the expressed duration is negative, the video is
 supposed to be generated forever.
+
+@item sar
+Set the sample aspect ratio of the sourced video.
+
+@item alpha
+Specify the alpha (opacity) of the background, only available in the
+@code{testsrc2} source. The value must be between 0 (fully transparent) and
+255 (fully opaque, the default).
 
 @item decimals, n
 Set the number of decimals to show in the timestamp, only available in the
@@ -17149,27 +17326,32 @@ timestamp value multiplied by the power of 10 of the specified
 value. Default value is 0.
 @end table
 
-For example the following:
+@subsection Examples
+
+@itemize
+@item
+Generate a video with a duration of 5.3 seconds, with size
+176x144 and a frame rate of 10 frames per second:
 @example
 testsrc=duration=5.3:size=qcif:rate=10
 @end example
 
-will generate a video with a duration of 5.3 seconds, with size
-176x144 and a frame rate of 10 frames per second.
-
+@item
 The following graph description will generate a red source
 with an opacity of 0.2, with size "qcif" and a frame rate of 10
-frames per second.
+frames per second:
 @example
 color=c=red@@0.2:s=qcif:r=10
 @end example
 
+@item
 If the input content is to be ignored, @code{nullsrc} can be used. The
 following command generates noise in the luminance plane by employing
 the @code{geq} filter:
 @example
 nullsrc=s=256x256, geq=random(1)*255:128:128
 @end example
+@end itemize
 
 @subsection Commands
 
