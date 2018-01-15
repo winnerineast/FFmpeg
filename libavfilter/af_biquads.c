@@ -86,6 +86,8 @@ enum WidthType {
     OCTAVE,
     QFACTOR,
     SLOPE,
+    KHERTZ,
+    NB_WTYPE,
 };
 
 typedef struct ChanCache {
@@ -259,6 +261,9 @@ static int config_filter(AVFilterLink *outlink, int reset)
     case HERTZ:
         alpha = sin(w0) / (2 * s->frequency / s->width);
         break;
+    case KHERTZ:
+        alpha = sin(w0) / (2 * s->frequency / (s->width * 1000));
+        break;
     case OCTAVE:
         alpha = sin(w0) * sinh(log(2.) / 2 * s->width * w0 / sin(w0));
         break;
@@ -370,11 +375,14 @@ static int config_filter(AVFilterLink *outlink, int reset)
         av_assert0(0);
     }
 
+    av_log(ctx, AV_LOG_VERBOSE, "a=%lf %lf %lf:b=%lf %lf %lf\n", s->a0, s->a1, s->a2, s->b0, s->b1, s->b2);
+
     s->a1 /= s->a0;
     s->a2 /= s->a0;
     s->b0 /= s->a0;
     s->b1 /= s->a0;
     s->b2 /= s->a0;
+    s->a0 /= s->a0;
 
     s->cache = av_realloc_f(s->cache, sizeof(ChanCache), inlink->channels);
     if (!s->cache)
@@ -412,7 +420,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *buf)
     if (av_frame_is_writable(buf)) {
         out_buf = buf;
     } else {
-        out_buf = ff_get_audio_buffer(inlink, nb_samples);
+        out_buf = ff_get_audio_buffer(outlink, nb_samples);
         if (!out_buf) {
             av_frame_free(&buf);
             return AVERROR(ENOMEM);
@@ -516,6 +524,7 @@ static int process_command(AVFilterContext *ctx, const char *cmd, const char *ar
         case 'q': width_type = QFACTOR; break;
         case 'o': width_type = OCTAVE;  break;
         case 's': width_type = SLOPE;   break;
+        case 'k': width_type = KHERTZ;  break;
         default:
             av_log(ctx, AV_LOG_ERROR, "Invalid width_type value: %c\n", width_type);
             return AVERROR(EINVAL);
@@ -608,14 +617,15 @@ AVFilter ff_af_##name_ = {                         \
 static const AVOption equalizer_options[] = {
     {"frequency", "set central frequency", OFFSET(frequency), AV_OPT_TYPE_DOUBLE, {.dbl=0}, 0, 999999, FLAGS},
     {"f",         "set central frequency", OFFSET(frequency), AV_OPT_TYPE_DOUBLE, {.dbl=0}, 0, 999999, FLAGS},
-    {"width_type", "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, SLOPE, FLAGS, "width_type"},
-    {"t",          "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, SLOPE, FLAGS, "width_type"},
+    {"width_type", "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, NB_WTYPE-1, FLAGS, "width_type"},
+    {"t",          "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, NB_WTYPE-1, FLAGS, "width_type"},
     {"h", "Hz", 0, AV_OPT_TYPE_CONST, {.i64=HERTZ}, 0, 0, FLAGS, "width_type"},
     {"q", "Q-Factor", 0, AV_OPT_TYPE_CONST, {.i64=QFACTOR}, 0, 0, FLAGS, "width_type"},
     {"o", "octave", 0, AV_OPT_TYPE_CONST, {.i64=OCTAVE}, 0, 0, FLAGS, "width_type"},
     {"s", "slope", 0, AV_OPT_TYPE_CONST, {.i64=SLOPE}, 0, 0, FLAGS, "width_type"},
-    {"width", "set band-width", OFFSET(width), AV_OPT_TYPE_DOUBLE, {.dbl=1}, 0, 999, FLAGS},
-    {"w",     "set band-width", OFFSET(width), AV_OPT_TYPE_DOUBLE, {.dbl=1}, 0, 999, FLAGS},
+    {"k", "kHz", 0, AV_OPT_TYPE_CONST, {.i64=KHERTZ}, 0, 0, FLAGS, "width_type"},
+    {"width", "set band-width", OFFSET(width), AV_OPT_TYPE_DOUBLE, {.dbl=1}, 0, 99999, FLAGS},
+    {"w",     "set band-width", OFFSET(width), AV_OPT_TYPE_DOUBLE, {.dbl=1}, 0, 99999, FLAGS},
     {"gain", "set gain", OFFSET(gain), AV_OPT_TYPE_DOUBLE, {.dbl=0}, -900, 900, FLAGS},
     {"g",    "set gain", OFFSET(gain), AV_OPT_TYPE_DOUBLE, {.dbl=0}, -900, 900, FLAGS},
     {"channels", "set channels to filter", OFFSET(channels), AV_OPT_TYPE_CHANNEL_LAYOUT, {.i64=-1}, INT64_MIN, INT64_MAX, FLAGS},
@@ -629,12 +639,13 @@ DEFINE_BIQUAD_FILTER(equalizer, "Apply two-pole peaking equalization (EQ) filter
 static const AVOption bass_options[] = {
     {"frequency", "set central frequency", OFFSET(frequency), AV_OPT_TYPE_DOUBLE, {.dbl=100}, 0, 999999, FLAGS},
     {"f",         "set central frequency", OFFSET(frequency), AV_OPT_TYPE_DOUBLE, {.dbl=100}, 0, 999999, FLAGS},
-    {"width_type", "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, SLOPE, FLAGS, "width_type"},
-    {"t",          "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, SLOPE, FLAGS, "width_type"},
+    {"width_type", "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, NB_WTYPE-1, FLAGS, "width_type"},
+    {"t",          "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, NB_WTYPE-1, FLAGS, "width_type"},
     {"h", "Hz", 0, AV_OPT_TYPE_CONST, {.i64=HERTZ}, 0, 0, FLAGS, "width_type"},
     {"q", "Q-Factor", 0, AV_OPT_TYPE_CONST, {.i64=QFACTOR}, 0, 0, FLAGS, "width_type"},
     {"o", "octave", 0, AV_OPT_TYPE_CONST, {.i64=OCTAVE}, 0, 0, FLAGS, "width_type"},
     {"s", "slope", 0, AV_OPT_TYPE_CONST, {.i64=SLOPE}, 0, 0, FLAGS, "width_type"},
+    {"k", "kHz", 0, AV_OPT_TYPE_CONST, {.i64=KHERTZ}, 0, 0, FLAGS, "width_type"},
     {"width", "set shelf transition steep", OFFSET(width), AV_OPT_TYPE_DOUBLE, {.dbl=0.5}, 0, 99999, FLAGS},
     {"w",     "set shelf transition steep", OFFSET(width), AV_OPT_TYPE_DOUBLE, {.dbl=0.5}, 0, 99999, FLAGS},
     {"gain", "set gain", OFFSET(gain), AV_OPT_TYPE_DOUBLE, {.dbl=0}, -900, 900, FLAGS},
@@ -650,12 +661,13 @@ DEFINE_BIQUAD_FILTER(bass, "Boost or cut lower frequencies.");
 static const AVOption treble_options[] = {
     {"frequency", "set central frequency", OFFSET(frequency), AV_OPT_TYPE_DOUBLE, {.dbl=3000}, 0, 999999, FLAGS},
     {"f",         "set central frequency", OFFSET(frequency), AV_OPT_TYPE_DOUBLE, {.dbl=3000}, 0, 999999, FLAGS},
-    {"width_type", "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, SLOPE, FLAGS, "width_type"},
-    {"t",          "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, SLOPE, FLAGS, "width_type"},
+    {"width_type", "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, NB_WTYPE-1, FLAGS, "width_type"},
+    {"t",          "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, NB_WTYPE-1, FLAGS, "width_type"},
     {"h", "Hz", 0, AV_OPT_TYPE_CONST, {.i64=HERTZ}, 0, 0, FLAGS, "width_type"},
     {"q", "Q-Factor", 0, AV_OPT_TYPE_CONST, {.i64=QFACTOR}, 0, 0, FLAGS, "width_type"},
     {"o", "octave", 0, AV_OPT_TYPE_CONST, {.i64=OCTAVE}, 0, 0, FLAGS, "width_type"},
     {"s", "slope", 0, AV_OPT_TYPE_CONST, {.i64=SLOPE}, 0, 0, FLAGS, "width_type"},
+    {"k", "kHz", 0, AV_OPT_TYPE_CONST, {.i64=KHERTZ}, 0, 0, FLAGS, "width_type"},
     {"width", "set shelf transition steep", OFFSET(width), AV_OPT_TYPE_DOUBLE, {.dbl=0.5}, 0, 99999, FLAGS},
     {"w",     "set shelf transition steep", OFFSET(width), AV_OPT_TYPE_DOUBLE, {.dbl=0.5}, 0, 99999, FLAGS},
     {"gain", "set gain", OFFSET(gain), AV_OPT_TYPE_DOUBLE, {.dbl=0}, -900, 900, FLAGS},
@@ -671,14 +683,15 @@ DEFINE_BIQUAD_FILTER(treble, "Boost or cut upper frequencies.");
 static const AVOption bandpass_options[] = {
     {"frequency", "set central frequency", OFFSET(frequency), AV_OPT_TYPE_DOUBLE, {.dbl=3000}, 0, 999999, FLAGS},
     {"f",         "set central frequency", OFFSET(frequency), AV_OPT_TYPE_DOUBLE, {.dbl=3000}, 0, 999999, FLAGS},
-    {"width_type", "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, SLOPE, FLAGS, "width_type"},
-    {"t",          "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, SLOPE, FLAGS, "width_type"},
+    {"width_type", "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, NB_WTYPE-1, FLAGS, "width_type"},
+    {"t",          "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, NB_WTYPE-1, FLAGS, "width_type"},
     {"h", "Hz", 0, AV_OPT_TYPE_CONST, {.i64=HERTZ}, 0, 0, FLAGS, "width_type"},
     {"q", "Q-Factor", 0, AV_OPT_TYPE_CONST, {.i64=QFACTOR}, 0, 0, FLAGS, "width_type"},
     {"o", "octave", 0, AV_OPT_TYPE_CONST, {.i64=OCTAVE}, 0, 0, FLAGS, "width_type"},
     {"s", "slope", 0, AV_OPT_TYPE_CONST, {.i64=SLOPE}, 0, 0, FLAGS, "width_type"},
-    {"width", "set band-width", OFFSET(width), AV_OPT_TYPE_DOUBLE, {.dbl=0.5}, 0, 999, FLAGS},
-    {"w",     "set band-width", OFFSET(width), AV_OPT_TYPE_DOUBLE, {.dbl=0.5}, 0, 999, FLAGS},
+    {"k", "kHz", 0, AV_OPT_TYPE_CONST, {.i64=KHERTZ}, 0, 0, FLAGS, "width_type"},
+    {"width", "set band-width", OFFSET(width), AV_OPT_TYPE_DOUBLE, {.dbl=0.5}, 0, 99999, FLAGS},
+    {"w",     "set band-width", OFFSET(width), AV_OPT_TYPE_DOUBLE, {.dbl=0.5}, 0, 99999, FLAGS},
     {"csg",   "use constant skirt gain", OFFSET(csg), AV_OPT_TYPE_BOOL, {.i64=0}, 0, 1, FLAGS},
     {"channels", "set channels to filter", OFFSET(channels), AV_OPT_TYPE_CHANNEL_LAYOUT, {.i64=-1}, INT64_MIN, INT64_MAX, FLAGS},
     {"c",        "set channels to filter", OFFSET(channels), AV_OPT_TYPE_CHANNEL_LAYOUT, {.i64=-1}, INT64_MIN, INT64_MAX, FLAGS},
@@ -691,14 +704,15 @@ DEFINE_BIQUAD_FILTER(bandpass, "Apply a two-pole Butterworth band-pass filter.")
 static const AVOption bandreject_options[] = {
     {"frequency", "set central frequency", OFFSET(frequency), AV_OPT_TYPE_DOUBLE, {.dbl=3000}, 0, 999999, FLAGS},
     {"f",         "set central frequency", OFFSET(frequency), AV_OPT_TYPE_DOUBLE, {.dbl=3000}, 0, 999999, FLAGS},
-    {"width_type", "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, SLOPE, FLAGS, "width_type"},
-    {"t",          "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, SLOPE, FLAGS, "width_type"},
+    {"width_type", "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, NB_WTYPE-1, FLAGS, "width_type"},
+    {"t",          "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, NB_WTYPE-1, FLAGS, "width_type"},
     {"h", "Hz", 0, AV_OPT_TYPE_CONST, {.i64=HERTZ}, 0, 0, FLAGS, "width_type"},
     {"q", "Q-Factor", 0, AV_OPT_TYPE_CONST, {.i64=QFACTOR}, 0, 0, FLAGS, "width_type"},
     {"o", "octave", 0, AV_OPT_TYPE_CONST, {.i64=OCTAVE}, 0, 0, FLAGS, "width_type"},
     {"s", "slope", 0, AV_OPT_TYPE_CONST, {.i64=SLOPE}, 0, 0, FLAGS, "width_type"},
-    {"width", "set band-width", OFFSET(width), AV_OPT_TYPE_DOUBLE, {.dbl=0.5}, 0, 999, FLAGS},
-    {"w",     "set band-width", OFFSET(width), AV_OPT_TYPE_DOUBLE, {.dbl=0.5}, 0, 999, FLAGS},
+    {"k", "kHz", 0, AV_OPT_TYPE_CONST, {.i64=KHERTZ}, 0, 0, FLAGS, "width_type"},
+    {"width", "set band-width", OFFSET(width), AV_OPT_TYPE_DOUBLE, {.dbl=0.5}, 0, 99999, FLAGS},
+    {"w",     "set band-width", OFFSET(width), AV_OPT_TYPE_DOUBLE, {.dbl=0.5}, 0, 99999, FLAGS},
     {"channels", "set channels to filter", OFFSET(channels), AV_OPT_TYPE_CHANNEL_LAYOUT, {.i64=-1}, INT64_MIN, INT64_MAX, FLAGS},
     {"c",        "set channels to filter", OFFSET(channels), AV_OPT_TYPE_CHANNEL_LAYOUT, {.i64=-1}, INT64_MIN, INT64_MAX, FLAGS},
     {NULL}
@@ -710,12 +724,13 @@ DEFINE_BIQUAD_FILTER(bandreject, "Apply a two-pole Butterworth band-reject filte
 static const AVOption lowpass_options[] = {
     {"frequency", "set frequency", OFFSET(frequency), AV_OPT_TYPE_DOUBLE, {.dbl=500}, 0, 999999, FLAGS},
     {"f",         "set frequency", OFFSET(frequency), AV_OPT_TYPE_DOUBLE, {.dbl=500}, 0, 999999, FLAGS},
-    {"width_type", "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, SLOPE, FLAGS, "width_type"},
-    {"t",          "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, SLOPE, FLAGS, "width_type"},
+    {"width_type", "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, NB_WTYPE-1, FLAGS, "width_type"},
+    {"t",          "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, NB_WTYPE-1, FLAGS, "width_type"},
     {"h", "Hz", 0, AV_OPT_TYPE_CONST, {.i64=HERTZ}, 0, 0, FLAGS, "width_type"},
     {"q", "Q-Factor", 0, AV_OPT_TYPE_CONST, {.i64=QFACTOR}, 0, 0, FLAGS, "width_type"},
     {"o", "octave", 0, AV_OPT_TYPE_CONST, {.i64=OCTAVE}, 0, 0, FLAGS, "width_type"},
     {"s", "slope", 0, AV_OPT_TYPE_CONST, {.i64=SLOPE}, 0, 0, FLAGS, "width_type"},
+    {"k", "kHz", 0, AV_OPT_TYPE_CONST, {.i64=KHERTZ}, 0, 0, FLAGS, "width_type"},
     {"width", "set width", OFFSET(width), AV_OPT_TYPE_DOUBLE, {.dbl=0.707}, 0, 99999, FLAGS},
     {"w",     "set width", OFFSET(width), AV_OPT_TYPE_DOUBLE, {.dbl=0.707}, 0, 99999, FLAGS},
     {"poles", "set number of poles", OFFSET(poles), AV_OPT_TYPE_INT, {.i64=2}, 1, 2, FLAGS},
@@ -731,12 +746,13 @@ DEFINE_BIQUAD_FILTER(lowpass, "Apply a low-pass filter with 3dB point frequency.
 static const AVOption highpass_options[] = {
     {"frequency", "set frequency", OFFSET(frequency), AV_OPT_TYPE_DOUBLE, {.dbl=3000}, 0, 999999, FLAGS},
     {"f",         "set frequency", OFFSET(frequency), AV_OPT_TYPE_DOUBLE, {.dbl=3000}, 0, 999999, FLAGS},
-    {"width_type", "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, SLOPE, FLAGS, "width_type"},
-    {"t",          "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, SLOPE, FLAGS, "width_type"},
+    {"width_type", "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, NB_WTYPE-1, FLAGS, "width_type"},
+    {"t",          "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=QFACTOR}, HERTZ, NB_WTYPE-1, FLAGS, "width_type"},
     {"h", "Hz", 0, AV_OPT_TYPE_CONST, {.i64=HERTZ}, 0, 0, FLAGS, "width_type"},
     {"q", "Q-Factor", 0, AV_OPT_TYPE_CONST, {.i64=QFACTOR}, 0, 0, FLAGS, "width_type"},
     {"o", "octave", 0, AV_OPT_TYPE_CONST, {.i64=OCTAVE}, 0, 0, FLAGS, "width_type"},
     {"s", "slope", 0, AV_OPT_TYPE_CONST, {.i64=SLOPE}, 0, 0, FLAGS, "width_type"},
+    {"k", "kHz", 0, AV_OPT_TYPE_CONST, {.i64=KHERTZ}, 0, 0, FLAGS, "width_type"},
     {"width", "set width", OFFSET(width), AV_OPT_TYPE_DOUBLE, {.dbl=0.707}, 0, 99999, FLAGS},
     {"w",     "set width", OFFSET(width), AV_OPT_TYPE_DOUBLE, {.dbl=0.707}, 0, 99999, FLAGS},
     {"poles", "set number of poles", OFFSET(poles), AV_OPT_TYPE_INT, {.i64=2}, 1, 2, FLAGS},
@@ -752,12 +768,13 @@ DEFINE_BIQUAD_FILTER(highpass, "Apply a high-pass filter with 3dB point frequenc
 static const AVOption allpass_options[] = {
     {"frequency", "set central frequency", OFFSET(frequency), AV_OPT_TYPE_DOUBLE, {.dbl=3000}, 0, 999999, FLAGS},
     {"f",         "set central frequency", OFFSET(frequency), AV_OPT_TYPE_DOUBLE, {.dbl=3000}, 0, 999999, FLAGS},
-    {"width_type", "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=HERTZ}, HERTZ, SLOPE, FLAGS, "width_type"},
-    {"t",          "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=HERTZ}, HERTZ, SLOPE, FLAGS, "width_type"},
+    {"width_type", "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=HERTZ}, HERTZ, NB_WTYPE-1, FLAGS, "width_type"},
+    {"t",          "set filter-width type", OFFSET(width_type), AV_OPT_TYPE_INT, {.i64=HERTZ}, HERTZ, NB_WTYPE-1, FLAGS, "width_type"},
     {"h", "Hz", 0, AV_OPT_TYPE_CONST, {.i64=HERTZ}, 0, 0, FLAGS, "width_type"},
     {"q", "Q-Factor", 0, AV_OPT_TYPE_CONST, {.i64=QFACTOR}, 0, 0, FLAGS, "width_type"},
     {"o", "octave", 0, AV_OPT_TYPE_CONST, {.i64=OCTAVE}, 0, 0, FLAGS, "width_type"},
     {"s", "slope", 0, AV_OPT_TYPE_CONST, {.i64=SLOPE}, 0, 0, FLAGS, "width_type"},
+    {"k", "kHz", 0, AV_OPT_TYPE_CONST, {.i64=KHERTZ}, 0, 0, FLAGS, "width_type"},
     {"width", "set filter-width", OFFSET(width), AV_OPT_TYPE_DOUBLE, {.dbl=707.1}, 0, 99999, FLAGS},
     {"w",     "set filter-width", OFFSET(width), AV_OPT_TYPE_DOUBLE, {.dbl=707.1}, 0, 99999, FLAGS},
     {"channels", "set channels to filter", OFFSET(channels), AV_OPT_TYPE_CHANNEL_LAYOUT, {.i64=-1}, INT64_MIN, INT64_MAX, FLAGS},
@@ -769,12 +786,12 @@ DEFINE_BIQUAD_FILTER(allpass, "Apply a two-pole all-pass filter.");
 #endif  /* CONFIG_ALLPASS_FILTER */
 #if CONFIG_BIQUAD_FILTER
 static const AVOption biquad_options[] = {
-    {"a0", NULL, OFFSET(a0), AV_OPT_TYPE_DOUBLE, {.dbl=1}, INT16_MIN, INT16_MAX, FLAGS},
-    {"a1", NULL, OFFSET(a1), AV_OPT_TYPE_DOUBLE, {.dbl=1}, INT16_MIN, INT16_MAX, FLAGS},
-    {"a2", NULL, OFFSET(a2), AV_OPT_TYPE_DOUBLE, {.dbl=1}, INT16_MIN, INT16_MAX, FLAGS},
-    {"b0", NULL, OFFSET(b0), AV_OPT_TYPE_DOUBLE, {.dbl=1}, INT16_MIN, INT16_MAX, FLAGS},
-    {"b1", NULL, OFFSET(b1), AV_OPT_TYPE_DOUBLE, {.dbl=1}, INT16_MIN, INT16_MAX, FLAGS},
-    {"b2", NULL, OFFSET(b2), AV_OPT_TYPE_DOUBLE, {.dbl=1}, INT16_MIN, INT16_MAX, FLAGS},
+    {"a0", NULL, OFFSET(a0), AV_OPT_TYPE_DOUBLE, {.dbl=1}, INT32_MIN, INT32_MAX, FLAGS},
+    {"a1", NULL, OFFSET(a1), AV_OPT_TYPE_DOUBLE, {.dbl=0}, INT32_MIN, INT32_MAX, FLAGS},
+    {"a2", NULL, OFFSET(a2), AV_OPT_TYPE_DOUBLE, {.dbl=0}, INT32_MIN, INT32_MAX, FLAGS},
+    {"b0", NULL, OFFSET(b0), AV_OPT_TYPE_DOUBLE, {.dbl=0}, INT32_MIN, INT32_MAX, FLAGS},
+    {"b1", NULL, OFFSET(b1), AV_OPT_TYPE_DOUBLE, {.dbl=0}, INT32_MIN, INT32_MAX, FLAGS},
+    {"b2", NULL, OFFSET(b2), AV_OPT_TYPE_DOUBLE, {.dbl=0}, INT32_MIN, INT32_MAX, FLAGS},
     {"channels", "set channels to filter", OFFSET(channels), AV_OPT_TYPE_CHANNEL_LAYOUT, {.i64=-1}, INT64_MIN, INT64_MAX, FLAGS},
     {"c",        "set channels to filter", OFFSET(channels), AV_OPT_TYPE_CHANNEL_LAYOUT, {.i64=-1}, INT64_MIN, INT64_MAX, FLAGS},
     {NULL}

@@ -19,6 +19,9 @@ FATE_MOV_FFPROBE = fate-mov-aac-2048-priming \
                    fate-mov-init-nonkeyframe \
                    fate-mov-displaymatrix \
                    fate-mov-spherical-mono \
+                   fate-mov-guess-delay-1 \
+                   fate-mov-guess-delay-2 \
+                   fate-mov-guess-delay-3 \
 
 FATE_SAMPLES_AVCONV += $(FATE_MOV)
 FATE_SAMPLES_FFPROBE += $(FATE_MOV_FFPROBE)
@@ -82,3 +85,7 @@ fate-mov-spherical-mono: CMD = run ffprobe$(PROGSSUF)$(EXESUF) -show_entries str
 fate-mov-gpmf-remux: CMD = md5 -i $(TARGET_SAMPLES)/mov/fake-gp-media-with-real-gpmf.mp4 -map 0 -c copy -fflags +bitexact -f mp4
 fate-mov-gpmf-remux: CMP = oneline
 fate-mov-gpmf-remux: REF = 8f48e435ee1f6b7e173ea756141eabf3
+
+fate-mov-guess-delay-1: CMD = run ffprobe$(PROGSSUF)$(EXESUF) -show_entries stream=has_b_frames -select_streams v $(TARGET_SAMPLES)/h264/h264_3bf_nopyramid_nobsrestriction.mp4
+fate-mov-guess-delay-2: CMD = run ffprobe$(PROGSSUF)$(EXESUF) -show_entries stream=has_b_frames -select_streams v $(TARGET_SAMPLES)/h264/h264_3bf_pyramid_nobsrestriction.mp4
+fate-mov-guess-delay-3: CMD = run ffprobe$(PROGSSUF)$(EXESUF) -show_entries stream=has_b_frames -select_streams v $(TARGET_SAMPLES)/h264/h264_4bf_pyramid_nobsrestriction.mp4
