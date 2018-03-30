@@ -119,7 +119,11 @@ static int64_t wrap_timestamp(const AVStream *st, int64_t timestamp)
 
 #if FF_API_FORMAT_GET_SET
 MAKE_ACCESSORS(AVStream, stream, AVRational, r_frame_rate)
+#if FF_API_LAVF_FFSERVER
+FF_DISABLE_DEPRECATION_WARNINGS
 MAKE_ACCESSORS(AVStream, stream, char *, recommended_encoder_configuration)
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
 MAKE_ACCESSORS(AVFormatContext, format, AVCodec *, video_codec)
 MAKE_ACCESSORS(AVFormatContext, format, AVCodec *, audio_codec)
 MAKE_ACCESSORS(AVFormatContext, format, AVCodec *, subtitle_codec)
@@ -551,7 +555,16 @@ int avformat_open_input(AVFormatContext **ps, const char *filename,
     if ((ret = av_opt_set_dict(s, &tmp)) < 0)
         goto fail;
 
+    if (!(s->url = av_strdup(filename ? filename : ""))) {
+        ret = AVERROR(ENOMEM);
+        goto fail;
+    }
+
+#if FF_API_FORMAT_FILENAME
+FF_DISABLE_DEPRECATION_WARNINGS
     av_strlcpy(s->filename, filename ? filename : "", sizeof(s->filename));
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
     if ((ret = init_input(s, filename, &tmp)) < 0)
         goto fail;
     s->probe_score = ret;
@@ -632,6 +645,8 @@ int avformat_open_input(AVFormatContext **ps, const char *filename,
             if ((ret = ff_id3v2_parse_apic(s, &id3v2_extra_meta)) < 0)
                 goto fail;
             if ((ret = ff_id3v2_parse_chapters(s, &id3v2_extra_meta)) < 0)
+                goto fail;
+            if ((ret = ff_id3v2_parse_priv(s, &id3v2_extra_meta)) < 0)
                 goto fail;
         } else
             av_log(s, AV_LOG_DEBUG, "demuxer does not support additional id3 data, skipping\n");
@@ -854,9 +869,9 @@ int ff_read_packet(AVFormatContext *s, AVPacket *pkt)
 
         if (!pkt->buf) {
             AVPacket tmp = { 0 };
-            ret = av_packet_ref(&tmp, pkt);
-            if (ret < 0)
-                return ret;
+            err = av_packet_ref(&tmp, pkt);
+            if (err < 0)
+                return err;
             *pkt = tmp;
         }
 
@@ -918,6 +933,7 @@ static int determinable_frame_size(AVCodecContext *avctx)
     case AV_CODEC_ID_MP1:
     case AV_CODEC_ID_MP2:
     case AV_CODEC_ID_MP3:
+    case AV_CODEC_ID_CODEC2:
         return 1;
     }
 
@@ -1142,7 +1158,9 @@ static void update_initial_timestamps(AVFormatContext *s, int stream_index,
     }
 
     if (st->start_time == AV_NOPTS_VALUE) {
-        st->start_time = pts;
+        if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO || !(pkt->flags & AV_PKT_FLAG_DISCARD)) {
+            st->start_time = pts;
+        }
         if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO && st->codecpar->sample_rate)
             st->start_time += av_rescale_q(st->skip_samples, (AVRational){1, st->codecpar->sample_rate}, st->time_base);
     }
@@ -2050,7 +2068,7 @@ void ff_configure_buffers_for_index(AVFormatContext *s, int64_t time_tolerance)
     int64_t pos_delta = 0;
     int64_t skip = 0;
     //We could use URLProtocol flags here but as many user applications do not use URLProtocols this would be unreliable
-    const char *proto = avio_find_protocol_name(s->filename);
+    const char *proto = avio_find_protocol_name(s->url);
 
     if (!proto) {
         av_log(s, AV_LOG_INFO,
@@ -3227,23 +3245,20 @@ static int tb_unreliable(AVCodecContext *c)
 
 int ff_alloc_extradata(AVCodecParameters *par, int size)
 {
-    int ret;
+    av_freep(&par->extradata);
+    par->extradata_size = 0;
 
-    if (size < 0 || size >= INT32_MAX - AV_INPUT_BUFFER_PADDING_SIZE) {
-        par->extradata = NULL;
-        par->extradata_size = 0;
+    if (size < 0 || size >= INT32_MAX - AV_INPUT_BUFFER_PADDING_SIZE)
         return AVERROR(EINVAL);
-    }
+
     par->extradata = av_malloc(size + AV_INPUT_BUFFER_PADDING_SIZE);
-    if (par->extradata) {
-        memset(par->extradata + size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
-        par->extradata_size = size;
-        ret = 0;
-    } else {
-        par->extradata_size = 0;
-        ret = AVERROR(ENOMEM);
-    }
-    return ret;
+    if (!par->extradata)
+        return AVERROR(ENOMEM);
+
+    memset(par->extradata + size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+    par->extradata_size = size;
+
+    return 0;
 }
 
 int ff_get_extradata(AVFormatContext *s, AVCodecParameters *par, AVIOContext *pb, int size)
@@ -3765,7 +3780,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
             if (st->info->fps_last_dts != AV_NOPTS_VALUE &&
                 st->info->fps_last_dts_idx > st->info->fps_first_dts_idx &&
                 (pkt->dts - st->info->fps_last_dts) / 1000 >
-                (st->info->fps_last_dts     - st->info->fps_first_dts) /
+                (st->info->fps_last_dts     - (uint64_t)st->info->fps_first_dts) /
                 (st->info->fps_last_dts_idx - st->info->fps_first_dts_idx)) {
                 av_log(ic, AV_LOG_WARNING,
                        "DTS discontinuity in stream %d: packet %d with DTS "
@@ -4256,6 +4271,8 @@ int ff_stream_encode_params_copy(AVStream *dst, const AVStream *src)
         }
     }
 
+#if FF_API_LAVF_FFSERVER
+FF_DISABLE_DEPRECATION_WARNINGS
     av_freep(&dst->recommended_encoder_configuration);
     if (src->recommended_encoder_configuration) {
         const char *conf_str = src->recommended_encoder_configuration;
@@ -4263,6 +4280,8 @@ int ff_stream_encode_params_copy(AVStream *dst, const AVStream *src)
         if (!dst->recommended_encoder_configuration)
             return AVERROR(ENOMEM);
     }
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
 
     return 0;
 }
@@ -4310,7 +4329,11 @@ FF_ENABLE_DEPRECATION_WARNINGS
     if (st->info)
         av_freep(&st->info->duration_error);
     av_freep(&st->info);
+#if FF_API_LAVF_FFSERVER
+FF_DISABLE_DEPRECATION_WARNINGS
     av_freep(&st->recommended_encoder_configuration);
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
 
     av_freep(pst);
 }
@@ -4357,6 +4380,7 @@ void avformat_free_context(AVFormatContext *s)
     av_freep(&s->streams);
     flush_packet_queue(s);
     av_freep(&s->internal);
+    av_freep(&s->url);
     av_free(s);
 }
 
@@ -4873,7 +4897,6 @@ int avformat_network_init(void)
 {
 #if CONFIG_NETWORK
     int ret;
-    ff_network_inited_globally = 1;
     if ((ret = ff_network_init()) < 0)
         return ret;
     if ((ret = ff_tls_init()) < 0)
@@ -4887,7 +4910,6 @@ int avformat_network_deinit(void)
 #if CONFIG_NETWORK
     ff_network_close();
     ff_tls_deinit();
-    ff_network_inited_globally = 0;
 #endif
     return 0;
 }
@@ -5622,5 +5644,17 @@ FF_DISABLE_DEPRECATION_WARNINGS
 FF_ENABLE_DEPRECATION_WARNINGS
 #else
     return st->internal->avctx->time_base;
+#endif
+}
+
+void ff_format_set_url(AVFormatContext *s, char *url)
+{
+    av_assert0(url);
+    av_freep(&s->url);
+    s->url = url;
+#if FF_API_FORMAT_FILENAME
+FF_DISABLE_DEPRECATION_WARNINGS
+    av_strlcpy(s->filename, url, sizeof(s->filename));
+FF_ENABLE_DEPRECATION_WARNINGS
 #endif
 }

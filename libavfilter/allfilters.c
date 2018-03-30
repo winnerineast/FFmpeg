@@ -98,6 +98,7 @@ static void register_all(void)
     REGISTER_FILTER(CROSSFEED,      crossfeed,      af);
     REGISTER_FILTER(CRYSTALIZER,    crystalizer,    af);
     REGISTER_FILTER(DCSHIFT,        dcshift,        af);
+    REGISTER_FILTER(DRMETER,        drmeter,        af);
     REGISTER_FILTER(DYNAUDNORM,     dynaudnorm,     af);
     REGISTER_FILTER(EARWAX,         earwax,         af);
     REGISTER_FILTER(EBUR128,        ebur128,        af);
@@ -148,6 +149,7 @@ static void register_all(void)
     REGISTER_FILTER(ASS,            ass,            vf);
     REGISTER_FILTER(ATADENOISE,     atadenoise,     vf);
     REGISTER_FILTER(AVGBLUR,        avgblur,        vf);
+    REGISTER_FILTER(AVGBLUR_OPENCL, avgblur_opencl, vf);
     REGISTER_FILTER(BBOX,           bbox,           vf);
     REGISTER_FILTER(BENCH,          bench,          vf);
     REGISTER_FILTER(BITPLANENOISE,  bitplanenoise,  vf);
@@ -166,6 +168,7 @@ static void register_all(void)
     REGISTER_FILTER(COLORMATRIX,    colormatrix,    vf);
     REGISTER_FILTER(COLORSPACE,     colorspace,     vf);
     REGISTER_FILTER(CONVOLUTION,    convolution,    vf);
+    REGISTER_FILTER(CONVOLUTION_OPENCL, convolution_opencl, vf);
     REGISTER_FILTER(CONVOLVE,       convolve,       vf);
     REGISTER_FILTER(COPY,           copy,           vf);
     REGISTER_FILTER(COREIMAGE,      coreimage,      vf);
@@ -184,6 +187,7 @@ static void register_all(void)
     REGISTER_FILTER(DEINTERLACE_VAAPI, deinterlace_vaapi, vf);
     REGISTER_FILTER(DEJUDDER,       dejudder,       vf);
     REGISTER_FILTER(DELOGO,         delogo,         vf);
+    REGISTER_FILTER(DENOISE_VAAPI,  denoise_vaapi,  vf);
     REGISTER_FILTER(DESHAKE,        deshake,        vf);
     REGISTER_FILTER(DESPILL,        despill,        vf);
     REGISTER_FILTER(DETELECINE,     detelecine,     vf);
@@ -284,6 +288,7 @@ static void register_all(void)
     REGISTER_FILTER(PP7,            pp7,            vf);
     REGISTER_FILTER(PREMULTIPLY,    premultiply,    vf);
     REGISTER_FILTER(PREWITT,        prewitt,        vf);
+    REGISTER_FILTER(PROCAMP_VAAPI,  procamp_vaapi,  vf);
     REGISTER_FILTER(PROGRAM_OPENCL, program_opencl, vf);
     REGISTER_FILTER(PSEUDOCOLOR,    pseudocolor,    vf);
     REGISTER_FILTER(PSNR,           psnr,           vf);
@@ -317,6 +322,7 @@ static void register_all(void)
     REGISTER_FILTER(SETRANGE,       setrange,       vf);
     REGISTER_FILTER(SETSAR,         setsar,         vf);
     REGISTER_FILTER(SETTB,          settb,          vf);
+    REGISTER_FILTER(SHARPNESS_VAAPI, sharpness_vaapi, vf);
     REGISTER_FILTER(SHOWINFO,       showinfo,       vf);
     REGISTER_FILTER(SHOWPALETTE,    showpalette,    vf);
     REGISTER_FILTER(SHUFFLEFRAMES,  shuffleframes,  vf);

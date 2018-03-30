@@ -2096,8 +2096,16 @@ static int matroska_parse_tracks(AVFormatContext *s)
         }
 
         if (track->type == MATROSKA_TRACK_TYPE_VIDEO) {
-            if (!track->default_duration && track->video.frame_rate > 0)
-                track->default_duration = 1000000000 / track->video.frame_rate;
+            if (!track->default_duration && track->video.frame_rate > 0) {
+                double default_duration = 1000000000 / track->video.frame_rate;
+                if (default_duration > UINT64_MAX || default_duration < 0) {
+                    av_log(matroska->ctx, AV_LOG_WARNING,
+                         "Invalid frame rate %e. Cannot calculate default duration.\n",
+                         track->video.frame_rate);
+                } else {
+                    track->default_duration = default_duration;
+                }
+            }
             if (track->video.display_width == -1)
                 track->video.display_width = track->video.pixel_width;
             if (track->video.display_height == -1)
@@ -2389,6 +2397,10 @@ static int matroska_parse_tracks(AVFormatContext *s)
                 return ret;
         } else if (codec_id == AV_CODEC_ID_PRORES && track->codec_priv.size == 4) {
             fourcc = AV_RL32(track->codec_priv.data);
+        } else if (codec_id == AV_CODEC_ID_VP9 && track->codec_priv.size) {
+            /* we don't need any value stored in CodecPrivate.
+               make sure that it's not exported as extradata. */
+            track->codec_priv.size = 0;
         }
         track->codec_priv.size -= extradata_offset;
 
@@ -2513,7 +2525,9 @@ static int matroska_parse_tracks(AVFormatContext *s)
             st->codecpar->channels    = track->audio.channels;
             if (!st->codecpar->bits_per_coded_sample)
                 st->codecpar->bits_per_coded_sample = track->audio.bitdepth;
-            if (st->codecpar->codec_id == AV_CODEC_ID_MP3)
+            if (st->codecpar->codec_id == AV_CODEC_ID_MP3 ||
+                st->codecpar->codec_id == AV_CODEC_ID_MLP ||
+                st->codecpar->codec_id == AV_CODEC_ID_TRUEHD)
                 st->need_parsing = AVSTREAM_PARSE_FULL;
             else if (st->codecpar->codec_id != AV_CODEC_ID_AAC)
                 st->need_parsing = AVSTREAM_PARSE_HEADERS;
@@ -3097,7 +3111,7 @@ static int matroska_parse_webvtt(MatroskaDemuxContext *matroska,
     err = av_new_packet(pkt, text_len);
     if (err < 0) {
         av_free(pkt);
-        return AVERROR(err);
+        return err;
     }
 
     memcpy(pkt->data, text, text_len);
@@ -3107,6 +3121,7 @@ static int matroska_parse_webvtt(MatroskaDemuxContext *matroska,
                                       AV_PKT_DATA_WEBVTT_IDENTIFIER,
                                       id_len);
         if (!buf) {
+            av_packet_unref(pkt);
             av_free(pkt);
             return AVERROR(ENOMEM);
         }
@@ -3118,6 +3133,7 @@ static int matroska_parse_webvtt(MatroskaDemuxContext *matroska,
                                       AV_PKT_DATA_WEBVTT_SETTINGS,
                                       settings_len);
         if (!buf) {
+            av_packet_unref(pkt);
             av_free(pkt);
             return AVERROR(ENOMEM);
         }
@@ -3945,8 +3961,8 @@ static int webm_dash_manifest_read_header(AVFormatContext *s)
     }
 
     // basename of the file
-    buf = strrchr(s->filename, '/');
-    av_dict_set(&s->streams[0]->metadata, FILENAME, buf ? ++buf : s->filename, 0);
+    buf = strrchr(s->url, '/');
+    av_dict_set(&s->streams[0]->metadata, FILENAME, buf ? ++buf : s->url, 0);
 
     // track number
     tracks = matroska->tracks.elem;

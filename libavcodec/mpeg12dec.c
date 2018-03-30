@@ -1969,6 +1969,8 @@ static int mpeg_decode_slice(MpegEncContext *s, int mb_y,
                     s->mv[0][0][1] = s->last_mv[0][0][1];
                     s->mv[1][0][0] = s->last_mv[1][0][0];
                     s->mv[1][0][1] = s->last_mv[1][0][1];
+                    s->field_select[0][0] = (s->picture_structure - 1) & 1;
+                    s->field_select[1][0] = (s->picture_structure - 1) & 1;
                 }
             }
         }
@@ -2893,7 +2895,7 @@ AVCodec ff_mpeg1video_decoder = {
     .max_lowres            = 3,
     .update_thread_context = ONLY_IF_THREADS_ENABLED(mpeg_decode_update_thread_context),
     .hw_configs            = (const AVCodecHWConfigInternal*[]) {
-#if CONFIG_MPEG2_NVDEC_HWACCEL
+#if CONFIG_MPEG1_NVDEC_HWACCEL
                                HWACCEL_NVDEC(mpeg1),
 #endif
 #if CONFIG_MPEG1_VDPAU_HWACCEL
