@@ -34,16 +34,17 @@ enum DumpFreq {
 
 typedef struct DumpExtradataContext {
     const AVClass *class;
+    AVPacket pkt;
     int freq;
 } DumpExtradataContext;
 
 static int dump_extradata(AVBSFContext *ctx, AVPacket *out)
 {
     DumpExtradataContext *s = ctx->priv_data;
-    AVPacket *in;
+    AVPacket *in = &s->pkt;
     int ret = 0;
 
-    ret = ff_bsf_get_packet(ctx, &in);
+    ret = ff_bsf_get_packet_ref(ctx, in);
     if (ret < 0)
         return ret;
 
@@ -72,7 +73,7 @@ static int dump_extradata(AVBSFContext *ctx, AVPacket *out)
     }
 
 fail:
-    av_packet_free(&in);
+    av_packet_unref(in);
 
     return ret;
 }
@@ -93,7 +94,7 @@ static const AVClass dump_extradata_class = {
     .class_name = "dump_extradata bsf",
     .item_name  = av_default_item_name,
     .option     = options,
-    .version    = LIBAVUTIL_VERSION_MAJOR,
+    .version    = LIBAVUTIL_VERSION_INT,
 };
 
 const AVBitStreamFilter ff_dump_extradata_bsf = {

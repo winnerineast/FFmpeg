@@ -114,6 +114,18 @@ static av_cold int libx265_encode_init(AVCodecContext *avctx)
     ctx->params->sourceWidth     = avctx->width;
     ctx->params->sourceHeight    = avctx->height;
     ctx->params->bEnablePsnr     = !!(avctx->flags & AV_CODEC_FLAG_PSNR);
+    ctx->params->bOpenGOP        = !(avctx->flags & AV_CODEC_FLAG_CLOSED_GOP);
+
+    /* Tune the CTU size based on input resolution. */
+    if (ctx->params->sourceWidth < 64 || ctx->params->sourceHeight < 64)
+        ctx->params->maxCUSize = 32;
+    if (ctx->params->sourceWidth < 32 || ctx->params->sourceHeight < 32)
+        ctx->params->maxCUSize = 16;
+    if (ctx->params->sourceWidth < 16 || ctx->params->sourceHeight < 16) {
+        av_log(avctx, AV_LOG_ERROR, "Image size is too small (%dx%d).\n",
+               ctx->params->sourceWidth, ctx->params->sourceHeight);
+        return AVERROR(EINVAL);
+    }
 
     if ((avctx->color_primaries <= AVCOL_PRI_SMPTE432 &&
          avctx->color_primaries != AVCOL_PRI_UNSPECIFIED) ||
@@ -193,6 +205,9 @@ static av_cold int libx265_encode_init(AVCodecContext *avctx)
         ctx->params->rc.rateControlMode = X265_RC_ABR;
     }
 
+    ctx->params->rc.vbvBufferSize = avctx->rc_buffer_size / 1000;
+    ctx->params->rc.vbvMaxBitrate = avctx->rc_max_rate    / 1000;
+
     if (!(avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER))
         ctx->params->bRepeatHeaders = 1;
 
@@ -219,6 +234,11 @@ static av_cold int libx265_encode_init(AVCodecContext *avctx)
             }
             av_dict_free(&dict);
         }
+    }
+
+    if (ctx->params->rc.vbvBufferSize && avctx->rc_initial_buffer_occupancy > 1000 &&
+        ctx->params->rc.vbvBufferInit == 0.9) {
+        ctx->params->rc.vbvBufferInit = (float)avctx->rc_initial_buffer_occupancy / 1000;
     }
 
     if (ctx->profile) {
@@ -265,6 +285,65 @@ static av_cold int libx265_encode_init(AVCodecContext *avctx)
     return 0;
 }
 
+static av_cold int libx265_encode_set_roi(libx265Context *ctx, const AVFrame *frame, x265_picture* pic)
+{
+    AVFrameSideData *sd = av_frame_get_side_data(frame, AV_FRAME_DATA_REGIONS_OF_INTEREST);
+    if (sd) {
+        if (ctx->params->rc.aqMode == X265_AQ_NONE) {
+            av_log(ctx, AV_LOG_WARNING, "Adaptive quantization must be enabled to use ROI encoding, skipping ROI.\n");
+        } else {
+            /* 8x8 block when qg-size is 8, 16*16 block otherwise. */
+            int mb_size = (ctx->params->rc.qgSize == 8) ? 8 : 16;
+            int mbx = (frame->width + mb_size - 1) / mb_size;
+            int mby = (frame->height + mb_size - 1) / mb_size;
+            int nb_rois;
+            AVRegionOfInterest *roi;
+            float *qoffsets;         /* will be freed after encode is called. */
+            qoffsets = av_mallocz_array(mbx * mby, sizeof(*qoffsets));
+            if (!qoffsets)
+                return AVERROR(ENOMEM);
+
+            nb_rois = sd->size / sizeof(AVRegionOfInterest);
+            roi = (AVRegionOfInterest*)sd->data;
+            for (int count = 0; count < nb_rois; count++) {
+                int starty = FFMIN(mby, roi->top / mb_size);
+                int endy   = FFMIN(mby, (roi->bottom + mb_size - 1)/ mb_size);
+                int startx = FFMIN(mbx, roi->left / mb_size);
+                int endx   = FFMIN(mbx, (roi->right + mb_size - 1)/ mb_size);
+                float qoffset;
+
+                if (roi->self_size == 0) {
+                    av_free(qoffsets);
+                    av_log(ctx, AV_LOG_ERROR, "AVRegionOfInterest.self_size must be set to sizeof(AVRegionOfInterest).\n");
+                    return AVERROR(EINVAL);
+                }
+
+                if (roi->qoffset.den == 0) {
+                    av_free(qoffsets);
+                    av_log(ctx, AV_LOG_ERROR, "AVRegionOfInterest.qoffset.den must not be zero.\n");
+                    return AVERROR(EINVAL);
+                }
+                qoffset = roi->qoffset.num * 1.0f / roi->qoffset.den;
+                qoffset = av_clipf(qoffset, -1.0f, 1.0f);
+
+                /* qp range of x265 is from 0 to 51, just choose 25 as the scale value,
+                 * so the range of final qoffset is [-25.0, 25.0].
+                 */
+                qoffset = qoffset * 25;
+
+                for (int y = starty; y < endy; y++)
+                    for (int x = startx; x < endx; x++)
+                        qoffsets[x + y*mbx] = qoffset;
+
+                roi = (AVRegionOfInterest*)((char*)roi + roi->self_size);
+            }
+
+            pic->quantOffsets = qoffsets;
+        }
+    }
+    return 0;
+}
+
 static int libx265_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
                                 const AVFrame *pic, int *got_packet)
 {
@@ -294,10 +373,17 @@ static int libx265_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
                             pic->pict_type == AV_PICTURE_TYPE_P ? X265_TYPE_P :
                             pic->pict_type == AV_PICTURE_TYPE_B ? X265_TYPE_B :
                             X265_TYPE_AUTO;
+
+        ret = libx265_encode_set_roi(ctx, pic, &x265pic);
+        if (ret < 0)
+            return ret;
     }
 
     ret = ctx->api->encoder_encode(ctx->encoder, &nal, &nnal,
                                    pic ? &x265pic : NULL, &x265pic_out);
+
+    av_freep(&x265pic.quantOffsets);
+
     if (ret < 0)
         return AVERROR_EXTERNAL;
 

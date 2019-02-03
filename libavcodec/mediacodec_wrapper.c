@@ -156,7 +156,7 @@ static const struct FFJniField jni_amediaformat_mapping[] = {
 static const AVClass amediaformat_class = {
     .class_name = "amediaformat",
     .item_name  = av_default_item_name,
-    .version    = LIBAVCODEC_VERSION_INT,
+    .version    = LIBAVUTIL_VERSION_INT,
 };
 
 struct FFAMediaFormat {
@@ -268,7 +268,7 @@ static const struct FFJniField jni_amediacodec_mapping[] = {
 static const AVClass amediacodec_class = {
     .class_name = "amediacodec",
     .item_name  = av_default_item_name,
-    .version    = LIBAVCODEC_VERSION_INT,
+    .version    = LIBAVUTIL_VERSION_INT,
 };
 
 struct FFAMediaCodec {
@@ -1432,7 +1432,7 @@ int ff_AMediaCodec_releaseOutputBufferAtTime(FFAMediaCodec *codec, size_t idx, i
 
     JNI_GET_ENV_OR_RETURN(env, codec, AVERROR_EXTERNAL);
 
-    (*env)->CallVoidMethod(env, codec->object, codec->jfields.release_output_buffer_at_time_id, (jint)idx, timestampNs);
+    (*env)->CallVoidMethod(env, codec->object, codec->jfields.release_output_buffer_at_time_id, (jint)idx, (jlong)timestampNs);
     if (ff_jni_exception_check(env, 1, codec) < 0) {
         ret = AVERROR_EXTERNAL;
         goto fail;
@@ -1685,5 +1685,20 @@ int ff_AMediaCodec_cleanOutputBuffers(FFAMediaCodec *codec)
     }
 
 fail:
+    return ret;
+}
+
+int ff_Build_SDK_INT(AVCodecContext *avctx)
+{
+    int ret = -1;
+    JNIEnv *env = NULL;
+    jclass versionClass;
+    jfieldID sdkIntFieldID;
+    JNI_GET_ENV_OR_RETURN(env, avctx, -1);
+
+    versionClass = (*env)->FindClass(env, "android/os/Build$VERSION");
+    sdkIntFieldID = (*env)->GetStaticFieldID(env, versionClass, "SDK_INT", "I");
+    ret = (*env)->GetStaticIntField(env, versionClass, sdkIntFieldID);
+    (*env)->DeleteLocalRef(env, versionClass);
     return ret;
 }
