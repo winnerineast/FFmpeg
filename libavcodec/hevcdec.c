@@ -409,6 +409,9 @@ static enum AVPixelFormat get_format(HEVCContext *s, const HEVCSPS *sps)
 #endif
         break;
     case AV_PIX_FMT_YUV420P12:
+    case AV_PIX_FMT_YUV444P:
+    case AV_PIX_FMT_YUV444P10:
+    case AV_PIX_FMT_YUV444P12:
 #if CONFIG_HEVC_NVDEC_HWACCEL
         *fmt++ = AV_PIX_FMT_CUDA;
 #endif
@@ -2924,6 +2927,10 @@ static int decode_nal_unit(HEVCContext *s, const H2645NAL *nal)
         }
 
         if (s->sh.first_slice_in_pic_flag) {
+            if (s->ref) {
+                av_log(s->avctx, AV_LOG_ERROR, "Two slices reporting being the first in the same frame.\n");
+                goto fail;
+            }
             if (s->max_ra == INT_MAX) {
                 if (s->nal_unit_type == HEVC_NAL_CRA_NUT || IS_BLA(s)) {
                     s->max_ra = s->poc;
