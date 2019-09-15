@@ -304,6 +304,22 @@ fail:
         return location_changed;
     return ff_http_averror(s->http_code, AVERROR(EIO));
 }
+int ff_http_get_shutdown_status(URLContext *h)
+{
+    int ret = 0;
+    HTTPContext *s = h->priv_data;
+
+    /* flush the receive buffer when it is write only mode */
+    char buf[1024];
+    int read_ret;
+    read_ret = ffurl_read(s->hd, buf, sizeof(buf));
+    if (read_ret < 0) {
+        ret = read_ret;
+    }
+
+    return ret;
+}
+
 
 int ff_http_do_new_request(URLContext *h, const char *uri)
 {
@@ -1638,7 +1654,7 @@ static int http_shutdown(URLContext *h, int flags)
             read_ret = ffurl_read(s->hd, buf, sizeof(buf));
             s->hd->flags &= ~AVIO_FLAG_NONBLOCK;
             if (read_ret < 0 && read_ret != AVERROR(EAGAIN)) {
-                av_log(h, AV_LOG_ERROR, "URL read error:  %d\n", read_ret);
+                av_log(h, AV_LOG_ERROR, "URL read error: %s\n", av_err2str(read_ret));
                 ret = read_ret;
             }
         }

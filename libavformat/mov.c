@@ -49,6 +49,7 @@
 #include "libavcodec/ac3tab.h"
 #include "libavcodec/flac.h"
 #include "libavcodec/mpegaudiodecheader.h"
+#include "libavcodec/mlp_parse.h"
 #include "avformat.h"
 #include "internal.h"
 #include "avio_internal.h"
@@ -2303,8 +2304,8 @@ static int mov_parse_stsd_data(MOVContext *c, AVIOContext *pb,
             int val;
             val = AV_RB32(st->codecpar->extradata + 4);
             tmcd_ctx->tmcd_flags = val;
-            st->avg_frame_rate.num = st->codecpar->extradata[16]; /* number of frame */
-            st->avg_frame_rate.den = 1;
+            st->avg_frame_rate.num = AV_RB32(st->codecpar->extradata + 8); /* timescale */
+            st->avg_frame_rate.den = AV_RB32(st->codecpar->extradata + 12); /* frameDuration */
 #if FF_API_LAVF_AVCTX
 FF_DISABLE_DEPRECATION_WARNINGS
             st->codec->time_base = av_inv_q(st->avg_frame_rate);
@@ -4562,8 +4563,6 @@ static int mov_read_tfhd(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     MOVTrackExt *trex = NULL;
     int flags, track_id, i;
 
-    c->fragment.found_tfhd = 1;
-
     avio_r8(pb); /* version */
     flags = avio_rb24(pb);
 
@@ -4579,6 +4578,7 @@ static int mov_read_tfhd(MOVContext *c, AVIOContext *pb, MOVAtom atom)
         av_log(c->fc, AV_LOG_WARNING, "could not find corresponding trex (id %u)\n", track_id);
         return 0;
     }
+    c->fragment.found_tfhd = 1;
     frag->track_id = track_id;
     set_frag_stream(&c->frag_index, track_id);
 
@@ -4782,8 +4782,8 @@ static int mov_read_trun(MOVContext *c, AVIOContext *pb, MOVAtom atom)
         entries = UINT_MAX / sizeof(AVIndexEntry) - st->nb_index_entries;
         av_log(c->fc, AV_LOG_ERROR, "Failed to add index entry\n");
     }
-    if (entries <= 0)
-        return -1;
+    if (entries == 0)
+        return 0;
 
     requested_size = (st->nb_index_entries + entries) * sizeof(AVIndexEntry);
     new_entries = av_fast_realloc(st->index_entries,
@@ -6684,6 +6684,38 @@ static int mov_read_dops(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     return 0;
 }
 
+static int mov_read_dmlp(MOVContext *c, AVIOContext *pb, MOVAtom atom)
+{
+    AVStream *st;
+    unsigned format_info;
+    int channel_assignment, channel_assignment1, channel_assignment2;
+    int ratebits;
+
+    if (c->fc->nb_streams < 1)
+        return 0;
+    st = c->fc->streams[c->fc->nb_streams-1];
+
+    if (atom.size < 10)
+        return AVERROR_INVALIDDATA;
+
+    format_info = avio_rb32(pb);
+
+    ratebits            = (format_info >> 28) & 0xF;
+    channel_assignment1 = (format_info >> 15) & 0x1F;
+    channel_assignment2 = format_info & 0x1FFF;
+    if (channel_assignment2)
+        channel_assignment = channel_assignment2;
+    else
+        channel_assignment = channel_assignment1;
+
+    st->codecpar->frame_size = 40 << (ratebits & 0x7);
+    st->codecpar->sample_rate = mlp_samplerate(ratebits);
+    st->codecpar->channels = truehd_channels(channel_assignment);
+    st->codecpar->channel_layout = truehd_layout(channel_assignment);
+
+    return 0;
+}
+
 static const MOVParseTableEntry mov_default_parse_table[] = {
 { MKTAG('A','C','L','R'), mov_read_aclr },
 { MKTAG('A','P','R','G'), mov_read_avid },
@@ -6772,6 +6804,7 @@ static const MOVParseTableEntry mov_default_parse_table[] = {
 { MKTAG('s','t','3','d'), mov_read_st3d }, /* stereoscopic 3D video box */
 { MKTAG('s','v','3','d'), mov_read_sv3d }, /* spherical video box */
 { MKTAG('d','O','p','s'), mov_read_dops },
+{ MKTAG('d','m','l','p'), mov_read_dmlp },
 { MKTAG('S','m','D','m'), mov_read_smdm },
 { MKTAG('C','o','L','L'), mov_read_coll },
 { MKTAG('v','p','c','C'), mov_read_vpcc },

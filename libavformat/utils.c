@@ -1762,6 +1762,11 @@ FF_ENABLE_DEPRECATION_WARNINGS
                av_ts2str(pkt->dts),
                pkt->size, pkt->duration, pkt->flags);
 
+    /* A demuxer might have returned EOF because of an IO error, let's
+     * propagate this back to the user. */
+    if (ret == AVERROR_EOF && s->pb && s->pb->error < 0 && s->pb->error != AVERROR(EAGAIN))
+        ret = s->pb->error;
+
     return ret;
 }
 
@@ -2136,7 +2141,13 @@ void ff_configure_buffers_for_index(AVFormatContext *s, int64_t time_tolerance)
     /* XXX This could be adjusted depending on protocol*/
     if (s->pb->buffer_size < pos_delta && pos_delta < (1<<24)) {
         av_log(s, AV_LOG_VERBOSE, "Reconfiguring buffers to size %"PRId64"\n", pos_delta);
-        ffio_set_buf_size(s->pb, pos_delta);
+
+        /* realloc the buffer and the original data will be retained */
+        if (ffio_realloc_buf(s->pb, pos_delta)) {
+            av_log(s, AV_LOG_ERROR, "Realloc buffer fail.\n");
+            return;
+        }
+
         s->pb->short_seek_threshold = FFMAX(s->pb->short_seek_threshold, pos_delta/2);
     }
 
@@ -2953,6 +2964,7 @@ static void estimate_timings(AVFormatContext *ic, int64_t old_offset)
         AVStream av_unused *st;
         for (i = 0; i < ic->nb_streams; i++) {
             st = ic->streams[i];
+            if (st->time_base.den)
             av_log(ic, AV_LOG_TRACE, "stream %d: start_time: %0.3f duration: %0.3f\n", i,
                    (double) st->start_time * av_q2d(st->time_base),
                    (double) st->duration   * av_q2d(st->time_base));
@@ -3347,8 +3359,10 @@ int ff_rfps_add_frame(AVFormatContext *ic, AVStream *st, int64_t ts)
                 }
             }
         }
-        st->info->duration_count++;
-        st->info->rfps_duration_sum += duration;
+        if (st->info->rfps_duration_sum <= INT64_MAX - duration) {
+            st->info->duration_count++;
+            st->info->rfps_duration_sum += duration;
+        }
 
         if (st->info->duration_count % 10 == 0) {
             int n = st->info->duration_count;
@@ -4218,7 +4232,8 @@ int av_find_best_stream(AVFormatContext *ic, enum AVMediaType type,
                 continue;
             }
         }
-        disposition = !(st->disposition & (AV_DISPOSITION_HEARING_IMPAIRED | AV_DISPOSITION_VISUAL_IMPAIRED));
+        disposition = !(st->disposition & (AV_DISPOSITION_HEARING_IMPAIRED | AV_DISPOSITION_VISUAL_IMPAIRED))
+                      + !! (st->disposition & AV_DISPOSITION_DEFAULT);
         count = st->codec_info_nb_frames;
         bitrate = par->bit_rate;
         multiframe = FFMIN(5, count);
@@ -4730,7 +4745,7 @@ void av_url_split(char *proto, int proto_size,
                   char *hostname, int hostname_size,
                   int *port_ptr, char *path, int path_size, const char *url)
 {
-    const char *p, *ls, *ls2, *ls3, *at, *at2, *col, *brk;
+    const char *p, *ls, *ls2, *at, *at2, *col, *brk;
 
     if (port_ptr)
         *port_ptr = -1;
@@ -4760,9 +4775,6 @@ void av_url_split(char *proto, int proto_size,
     /* separate path from hostname */
     ls = strchr(p, '/');
     ls2 = strchr(p, '?');
-    ls3 = strchr(p, '@');
-    if (ls3 && ls3 > ls && (!ls2 || ls2 > ls3))
-        ls = strchr(ls3, '/');
     if (!ls)
         ls = ls2;
     else if (ls && ls2)
@@ -5110,7 +5122,7 @@ AVRational av_guess_frame_rate(AVFormatContext *format, AVStream *st, AVFrame *f
  *         >0 if st is a matching stream
  */
 static int match_stream_specifier(AVFormatContext *s, AVStream *st,
-                                  const char *spec, const char **indexptr)
+                                  const char *spec, const char **indexptr, AVProgram **p)
 {
     int match = 1;                      /* Stores if the specifier matches so far. */
     while (*spec) {
@@ -5165,6 +5177,8 @@ FF_DISABLE_DEPRECATION_WARNINGS
                     for (j = 0; j < s->programs[i]->nb_stream_indexes; j++) {
                         if (st->index == s->programs[i]->stream_index[j]) {
                             found = 1;
+                            if (p)
+                                *p = s->programs[i];
                             i = s->nb_programs;
                             break;
                         }
@@ -5267,8 +5281,10 @@ int avformat_match_stream_specifier(AVFormatContext *s, AVStream *st,
     int ret, index;
     char *endptr;
     const char *indexptr = NULL;
+    AVProgram *p = NULL;
+    int nb_streams;
 
-    ret = match_stream_specifier(s, st, spec, &indexptr);
+    ret = match_stream_specifier(s, st, spec, &indexptr, &p);
     if (ret < 0)
         goto error;
 
@@ -5286,11 +5302,13 @@ int avformat_match_stream_specifier(AVFormatContext *s, AVStream *st,
         return (index == st->index);
 
     /* If we requested a matching stream index, we have to ensure st is that. */
-    for (int i = 0; i < s->nb_streams && index >= 0; i++) {
-        ret = match_stream_specifier(s, s->streams[i], spec, NULL);
+    nb_streams = p ? p->nb_stream_indexes : s->nb_streams;
+    for (int i = 0; i < nb_streams && index >= 0; i++) {
+        AVStream *candidate = p ? s->streams[p->stream_index[i]] : s->streams[i];
+        ret = match_stream_specifier(s, candidate, spec, NULL, NULL);
         if (ret < 0)
             goto error;
-        if (ret > 0 && index-- == 0 && st == s->streams[i])
+        if (ret > 0 && index-- == 0 && st == candidate)
             return 1;
     }
     return 0;

@@ -1853,6 +1853,218 @@ static void hcscale_fast_vsx(SwsContext *c, int16_t *dst1, int16_t *dst2,
 
 #undef HCSCALE
 
+static void hScale8To19_vsx(SwsContext *c, int16_t *_dst, int dstW,
+                            const uint8_t *src, const int16_t *filter,
+                            const int32_t *filterPos, int filterSize)
+{
+    int i, j;
+    int32_t *dst = (int32_t *) _dst;
+    vector int16_t vfilter, vin;
+    vector uint8_t vin8;
+    vector int32_t vout;
+    const vector uint8_t vzero = vec_splat_u8(0);
+    const vector uint8_t vunusedtab[8] = {
+        (vector uint8_t) {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7,
+                          0x8, 0x9, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf},
+        (vector uint8_t) {0x0, 0x1, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10,
+                          0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10},
+        (vector uint8_t) {0x0, 0x1, 0x2, 0x3, 0x10, 0x10, 0x10, 0x10,
+                          0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10},
+        (vector uint8_t) {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x10, 0x10,
+                          0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10},
+        (vector uint8_t) {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7,
+                          0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10},
+        (vector uint8_t) {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7,
+                          0x8, 0x9, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10},
+        (vector uint8_t) {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7,
+                          0x8, 0x9, 0xa, 0xb, 0x10, 0x10, 0x10, 0x10},
+        (vector uint8_t) {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7,
+                          0x8, 0x9, 0xa, 0xb, 0xc, 0xd, 0x10, 0x10},
+    };
+    const vector uint8_t vunused = vunusedtab[filterSize % 8];
+
+    if (filterSize == 1) {
+        for (i = 0; i < dstW; i++) {
+            int srcPos = filterPos[i];
+            int val    = 0;
+            for (j = 0; j < filterSize; j++) {
+                val += ((int)src[srcPos + j]) * filter[filterSize * i + j];
+            }
+            dst[i] = FFMIN(val >> 3, (1 << 19) - 1); // the cubic equation does overflow ...
+        }
+    } else {
+        for (i = 0; i < dstW; i++) {
+            const int srcPos = filterPos[i];
+            vout = vec_splat_s32(0);
+            for (j = 0; j < filterSize; j += 8) {
+                vin8 = vec_vsx_ld(0, &src[srcPos + j]);
+                vin = (vector int16_t) vec_mergeh(vin8, vzero);
+                if (j + 8 > filterSize) // Remove the unused elements on the last round
+                    vin = vec_perm(vin, (vector int16_t) vzero, vunused);
+
+                vfilter = vec_vsx_ld(0, &filter[filterSize * i + j]);
+                vout = vec_msums(vin, vfilter, vout);
+            }
+            vout = vec_sums(vout, (vector int32_t) vzero);
+            dst[i] = FFMIN(vout[3] >> 3, (1 << 19) - 1);
+        }
+    }
+}
+
+static void hScale16To19_vsx(SwsContext *c, int16_t *_dst, int dstW,
+                             const uint8_t *_src, const int16_t *filter,
+                             const int32_t *filterPos, int filterSize)
+{
+    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(c->srcFormat);
+    int i, j;
+    int32_t *dst        = (int32_t *) _dst;
+    const uint16_t *src = (const uint16_t *) _src;
+    int bits            = desc->comp[0].depth - 1;
+    int sh              = bits - 4;
+    vector int16_t vfilter, vin;
+    vector int32_t vout, vtmp, vtmp2, vfilter32_l, vfilter32_r;
+    const vector uint8_t vzero = vec_splat_u8(0);
+    const vector uint8_t vunusedtab[8] = {
+        (vector uint8_t) {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7,
+                          0x8, 0x9, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf},
+        (vector uint8_t) {0x0, 0x1, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10,
+                          0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10},
+        (vector uint8_t) {0x0, 0x1, 0x2, 0x3, 0x10, 0x10, 0x10, 0x10,
+                          0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10},
+        (vector uint8_t) {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x10, 0x10,
+                          0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10},
+        (vector uint8_t) {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7,
+                          0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10},
+        (vector uint8_t) {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7,
+                          0x8, 0x9, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10},
+        (vector uint8_t) {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7,
+                          0x8, 0x9, 0xa, 0xb, 0x10, 0x10, 0x10, 0x10},
+        (vector uint8_t) {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7,
+                          0x8, 0x9, 0xa, 0xb, 0xc, 0xd, 0x10, 0x10},
+    };
+    const vector uint8_t vunused = vunusedtab[filterSize % 8];
+
+    if ((isAnyRGB(c->srcFormat) || c->srcFormat==AV_PIX_FMT_PAL8) && desc->comp[0].depth<16) {
+        sh = 9;
+    } else if (desc->flags & AV_PIX_FMT_FLAG_FLOAT) { /* float input are process like uint 16bpc */
+        sh = 16 - 1 - 4;
+    }
+
+    if (filterSize == 1) {
+        for (i = 0; i < dstW; i++) {
+            int srcPos = filterPos[i];
+            int val    = 0;
+
+            for (j = 0; j < filterSize; j++) {
+                val += src[srcPos + j] * filter[filterSize * i + j];
+            }
+            // filter=14 bit, input=16 bit, output=30 bit, >> 11 makes 19 bit
+            dst[i] = FFMIN(val >> sh, (1 << 19) - 1);
+        }
+    } else {
+        for (i = 0; i < dstW; i++) {
+            const int srcPos = filterPos[i];
+            vout = vec_splat_s32(0);
+            for (j = 0; j < filterSize; j += 8) {
+                vin = (vector int16_t) vec_vsx_ld(0, &src[srcPos + j]);
+                if (j + 8 > filterSize) // Remove the unused elements on the last round
+                    vin = vec_perm(vin, (vector int16_t) vzero, vunused);
+
+                vfilter = vec_vsx_ld(0, &filter[filterSize * i + j]);
+                vfilter32_l = vec_unpackh(vfilter);
+                vfilter32_r = vec_unpackl(vfilter);
+
+                vtmp = (vector int32_t) vec_mergeh(vin, (vector int16_t) vzero);
+                vtmp2 = (vector int32_t) vec_mergel(vin, (vector int16_t) vzero);
+
+                vtmp = vec_mul(vtmp, vfilter32_l);
+                vtmp2 = vec_mul(vtmp2, vfilter32_r);
+
+                vout = vec_adds(vout, vtmp);
+                vout = vec_adds(vout, vtmp2);
+            }
+            vout = vec_sums(vout, (vector int32_t) vzero);
+            dst[i] = FFMIN(vout[3] >> sh, (1 << 19) - 1);
+        }
+    }
+}
+
+static void hScale16To15_vsx(SwsContext *c, int16_t *dst, int dstW,
+                             const uint8_t *_src, const int16_t *filter,
+                             const int32_t *filterPos, int filterSize)
+{
+    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(c->srcFormat);
+    int i, j;
+    const uint16_t *src = (const uint16_t *) _src;
+    int sh              = desc->comp[0].depth - 1;
+    vector int16_t vfilter, vin;
+    vector int32_t vout, vtmp, vtmp2, vfilter32_l, vfilter32_r;
+    const vector uint8_t vzero = vec_splat_u8(0);
+    const vector uint8_t vunusedtab[8] = {
+        (vector uint8_t) {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7,
+                          0x8, 0x9, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf},
+        (vector uint8_t) {0x0, 0x1, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10,
+                          0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10},
+        (vector uint8_t) {0x0, 0x1, 0x2, 0x3, 0x10, 0x10, 0x10, 0x10,
+                          0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10},
+        (vector uint8_t) {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x10, 0x10,
+                          0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10},
+        (vector uint8_t) {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7,
+                          0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10},
+        (vector uint8_t) {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7,
+                          0x8, 0x9, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10},
+        (vector uint8_t) {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7,
+                          0x8, 0x9, 0xa, 0xb, 0x10, 0x10, 0x10, 0x10},
+        (vector uint8_t) {0x0, 0x1, 0x2, 0x3, 0x4, 0x5, 0x6, 0x7,
+                          0x8, 0x9, 0xa, 0xb, 0xc, 0xd, 0x10, 0x10},
+    };
+    const vector uint8_t vunused = vunusedtab[filterSize % 8];
+
+    if (sh<15) {
+        sh = isAnyRGB(c->srcFormat) || c->srcFormat==AV_PIX_FMT_PAL8 ? 13 : (desc->comp[0].depth - 1);
+    } else if (desc->flags & AV_PIX_FMT_FLAG_FLOAT) { /* float input are process like uint 16bpc */
+        sh = 16 - 1;
+    }
+
+    if (filterSize == 1) {
+        for (i = 0; i < dstW; i++) {
+            int srcPos = filterPos[i];
+            int val    = 0;
+
+            for (j = 0; j < filterSize; j++) {
+                val += src[srcPos + j] * filter[filterSize * i + j];
+            }
+            // filter=14 bit, input=16 bit, output=30 bit, >> 15 makes 15 bit
+            dst[i] = FFMIN(val >> sh, (1 << 15) - 1);
+        }
+    } else {
+        for (i = 0; i < dstW; i++) {
+            const int srcPos = filterPos[i];
+            vout = vec_splat_s32(0);
+            for (j = 0; j < filterSize; j += 8) {
+                vin = (vector int16_t) vec_vsx_ld(0, &src[srcPos + j]);
+                if (j + 8 > filterSize) // Remove the unused elements on the last round
+                    vin = vec_perm(vin, (vector int16_t) vzero, vunused);
+
+                vfilter = vec_vsx_ld(0, &filter[filterSize * i + j]);
+                vfilter32_l = vec_unpackh(vfilter);
+                vfilter32_r = vec_unpackl(vfilter);
+
+                vtmp = (vector int32_t) vec_mergeh(vin, (vector int16_t) vzero);
+                vtmp2 = (vector int32_t) vec_mergel(vin, (vector int16_t) vzero);
+
+                vtmp = vec_mul(vtmp, vfilter32_l);
+                vtmp2 = vec_mul(vtmp2, vfilter32_r);
+
+                vout = vec_adds(vout, vtmp);
+                vout = vec_adds(vout, vtmp2);
+            }
+            vout = vec_sums(vout, (vector int32_t) vzero);
+            dst[i] = FFMIN(vout[3] >> sh, (1 << 15) - 1);
+        }
+    }
+}
+
 #endif /* !HAVE_BIGENDIAN */
 
 #endif /* HAVE_VSX */
@@ -1862,20 +2074,29 @@ av_cold void ff_sws_init_swscale_vsx(SwsContext *c)
 #if HAVE_VSX
     enum AVPixelFormat dstFormat = c->dstFormat;
     const int cpu_flags = av_get_cpu_flags();
+    const unsigned char power8 = HAVE_POWER8 && cpu_flags & AV_CPU_FLAG_POWER8;
 
     if (!(cpu_flags & AV_CPU_FLAG_VSX))
         return;
 
 #if !HAVE_BIGENDIAN
-    if (c->srcBpc == 8 && c->dstBpc <= 14) {
-        c->hyScale = c->hcScale = hScale_real_vsx;
-        if (c->flags & SWS_FAST_BILINEAR && c->dstW >= c->srcW && c->chrDstW >= c->chrSrcW) {
-            c->hyscale_fast = hyscale_fast_vsx;
-            c->hcscale_fast = hcscale_fast_vsx;
+    if (c->srcBpc == 8) {
+        if (c->dstBpc <= 14) {
+            c->hyScale = c->hcScale = hScale_real_vsx;
+            if (c->flags & SWS_FAST_BILINEAR && c->dstW >= c->srcW && c->chrDstW >= c->chrSrcW) {
+                c->hyscale_fast = hyscale_fast_vsx;
+                c->hcscale_fast = hcscale_fast_vsx;
+            }
+        } else {
+            c->hyScale = c->hcScale = hScale8To19_vsx;
+        }
+    } else {
+        if (power8) {
+            c->hyScale = c->hcScale = c->dstBpc > 14 ? hScale16To19_vsx
+                                                     : hScale16To15_vsx;
         }
     }
-    if (!is16BPS(dstFormat) && !isNBPS(dstFormat) &&
-        dstFormat != AV_PIX_FMT_NV12 && dstFormat != AV_PIX_FMT_NV21 &&
+    if (!is16BPS(dstFormat) && !isNBPS(dstFormat) && !isSemiPlanarYUV(dstFormat) &&
         dstFormat != AV_PIX_FMT_GRAYF32BE && dstFormat != AV_PIX_FMT_GRAYF32LE &&
         !c->needAlpha) {
         c->yuv2planeX = yuv2planeX_vsx;
@@ -1923,21 +2144,21 @@ av_cold void ff_sws_init_swscale_vsx(SwsContext *c)
     if (c->flags & SWS_FULL_CHR_H_INT) {
         switch (dstFormat) {
             case AV_PIX_FMT_RGB24:
-                if (HAVE_POWER8 && cpu_flags & AV_CPU_FLAG_POWER8) {
+                if (power8) {
                     c->yuv2packed1 = yuv2rgb24_full_1_vsx;
                     c->yuv2packed2 = yuv2rgb24_full_2_vsx;
                     c->yuv2packedX = yuv2rgb24_full_X_vsx;
                 }
             break;
             case AV_PIX_FMT_BGR24:
-                if (HAVE_POWER8 && cpu_flags & AV_CPU_FLAG_POWER8) {
+                if (power8) {
                     c->yuv2packed1 = yuv2bgr24_full_1_vsx;
                     c->yuv2packed2 = yuv2bgr24_full_2_vsx;
                     c->yuv2packedX = yuv2bgr24_full_X_vsx;
                 }
             break;
             case AV_PIX_FMT_BGRA:
-                if (HAVE_POWER8 && cpu_flags & AV_CPU_FLAG_POWER8) {
+                if (power8) {
                     if (!c->needAlpha) {
                         c->yuv2packed1 = yuv2bgrx32_full_1_vsx;
                         c->yuv2packed2 = yuv2bgrx32_full_2_vsx;
@@ -1946,7 +2167,7 @@ av_cold void ff_sws_init_swscale_vsx(SwsContext *c)
                 }
             break;
             case AV_PIX_FMT_RGBA:
-                if (HAVE_POWER8 && cpu_flags & AV_CPU_FLAG_POWER8) {
+                if (power8) {
                     if (!c->needAlpha) {
                         c->yuv2packed1 = yuv2rgbx32_full_1_vsx;
                         c->yuv2packed2 = yuv2rgbx32_full_2_vsx;
@@ -1955,7 +2176,7 @@ av_cold void ff_sws_init_swscale_vsx(SwsContext *c)
                 }
             break;
             case AV_PIX_FMT_ARGB:
-                if (HAVE_POWER8 && cpu_flags & AV_CPU_FLAG_POWER8) {
+                if (power8) {
                     if (!c->needAlpha) {
                         c->yuv2packed1 = yuv2xrgb32_full_1_vsx;
                         c->yuv2packed2 = yuv2xrgb32_full_2_vsx;
@@ -1964,7 +2185,7 @@ av_cold void ff_sws_init_swscale_vsx(SwsContext *c)
                 }
             break;
             case AV_PIX_FMT_ABGR:
-                if (HAVE_POWER8 && cpu_flags & AV_CPU_FLAG_POWER8) {
+                if (power8) {
                     if (!c->needAlpha) {
                         c->yuv2packed1 = yuv2xbgr32_full_1_vsx;
                         c->yuv2packed2 = yuv2xbgr32_full_2_vsx;
@@ -1991,7 +2212,7 @@ av_cold void ff_sws_init_swscale_vsx(SwsContext *c)
                 c->yuv2packedX = yuv2uyvy422_X_vsx;
             break;
             case AV_PIX_FMT_BGRA:
-                if (HAVE_POWER8 && cpu_flags & AV_CPU_FLAG_POWER8) {
+                if (power8) {
                     if (!c->needAlpha) {
                         c->yuv2packed1 = yuv2bgrx32_1_vsx;
                         c->yuv2packed2 = yuv2bgrx32_2_vsx;
@@ -1999,7 +2220,7 @@ av_cold void ff_sws_init_swscale_vsx(SwsContext *c)
                 }
             break;
             case AV_PIX_FMT_RGBA:
-                if (HAVE_POWER8 && cpu_flags & AV_CPU_FLAG_POWER8) {
+                if (power8) {
                     if (!c->needAlpha) {
                         c->yuv2packed1 = yuv2rgbx32_1_vsx;
                         c->yuv2packed2 = yuv2rgbx32_2_vsx;
@@ -2007,7 +2228,7 @@ av_cold void ff_sws_init_swscale_vsx(SwsContext *c)
                 }
             break;
             case AV_PIX_FMT_ARGB:
-                if (HAVE_POWER8 && cpu_flags & AV_CPU_FLAG_POWER8) {
+                if (power8) {
                     if (!c->needAlpha) {
                         c->yuv2packed1 = yuv2xrgb32_1_vsx;
                         c->yuv2packed2 = yuv2xrgb32_2_vsx;
@@ -2015,7 +2236,7 @@ av_cold void ff_sws_init_swscale_vsx(SwsContext *c)
                 }
             break;
             case AV_PIX_FMT_ABGR:
-                if (HAVE_POWER8 && cpu_flags & AV_CPU_FLAG_POWER8) {
+                if (power8) {
                     if (!c->needAlpha) {
                         c->yuv2packed1 = yuv2xbgr32_1_vsx;
                         c->yuv2packed2 = yuv2xbgr32_2_vsx;
@@ -2023,13 +2244,13 @@ av_cold void ff_sws_init_swscale_vsx(SwsContext *c)
                 }
             break;
             case AV_PIX_FMT_RGB24:
-                if (HAVE_POWER8 && cpu_flags & AV_CPU_FLAG_POWER8) {
+                if (power8) {
                     c->yuv2packed1 = yuv2rgb24_1_vsx;
                     c->yuv2packed2 = yuv2rgb24_2_vsx;
                 }
             break;
             case AV_PIX_FMT_BGR24:
-                if (HAVE_POWER8 && cpu_flags & AV_CPU_FLAG_POWER8) {
+                if (power8) {
                     c->yuv2packed1 = yuv2bgr24_1_vsx;
                     c->yuv2packed2 = yuv2bgr24_2_vsx;
                 }

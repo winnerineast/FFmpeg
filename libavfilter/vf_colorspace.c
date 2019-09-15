@@ -260,9 +260,9 @@ static int fill_gamma_table(ColorSpaceContext *s)
         s->delin_lut[n] = av_clip_int16(lrint(d * 28672.0));
 
         // linearize
-        if (v <= -in_beta) {
+        if (v <= -in_beta * in_delta) {
             l = -pow((1.0 - in_alpha - v) * in_ialpha, in_igamma);
-        } else if (v < in_beta) {
+        } else if (v < in_beta * in_delta) {
             l = v * in_idelta;
         } else {
             l = pow((v + in_alpha - 1.0) * in_ialpha, in_igamma);
@@ -969,6 +969,7 @@ static const AVOption colorspace_options[] = {
     ENUM("smpte432",     AVCOL_PRI_SMPTE432,   "prm"),
     ENUM("bt2020",       AVCOL_PRI_BT2020,     "prm"),
     ENUM("jedec-p22",    AVCOL_PRI_JEDEC_P22,  "prm"),
+    ENUM("ebu3213",      AVCOL_PRI_EBU3213,    "prm"),
 
     { "trc",        "Output transfer characteristics",
       OFFSET(user_trc),   AV_OPT_TYPE_INT, { .i64 = AVCOL_TRC_UNSPECIFIED },
