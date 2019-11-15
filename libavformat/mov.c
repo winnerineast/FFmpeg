@@ -1394,14 +1394,14 @@ static int mov_read_moof(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     return mov_read_default(c, pb, atom);
 }
 
-static void mov_metadata_creation_time(AVDictionary **metadata, int64_t time)
+static void mov_metadata_creation_time(AVDictionary **metadata, int64_t time, void *logctx)
 {
     if (time) {
         if(time >= 2082844800)
             time -= 2082844800;  /* seconds between 1904-01-01 and Epoch */
 
         if ((int64_t)(time * 1000000ULL) / 1000000 != time) {
-            av_log(NULL, AV_LOG_DEBUG, "creation_time is not representable\n");
+            av_log(logctx, AV_LOG_DEBUG, "creation_time is not representable\n");
             return;
         }
 
@@ -1441,7 +1441,7 @@ static int mov_read_mdhd(MOVContext *c, AVIOContext *pb, MOVAtom atom)
         creation_time = avio_rb32(pb);
         avio_rb32(pb); /* modification time */
     }
-    mov_metadata_creation_time(&st->metadata, creation_time);
+    mov_metadata_creation_time(&st->metadata, creation_time, c->fc);
 
     sc->time_scale = avio_rb32(pb);
     if (sc->time_scale <= 0) {
@@ -1472,7 +1472,7 @@ static int mov_read_mvhd(MOVContext *c, AVIOContext *pb, MOVAtom atom)
         creation_time = avio_rb32(pb);
         avio_rb32(pb); /* modification time */
     }
-    mov_metadata_creation_time(&c->fc->metadata, creation_time);
+    mov_metadata_creation_time(&c->fc->metadata, creation_time, c->fc);
     c->time_scale = avio_rb32(pb); /* time scale */
     if (c->time_scale <= 0) {
         av_log(c->fc, AV_LOG_ERROR, "Invalid mvhd time scale %d, defaulting to 1\n", c->time_scale);
@@ -1621,7 +1621,7 @@ static int mov_read_fiel(MOVContext *c, AVIOContext *pb, MOVAtom atom)
         }
     }
     if (decoded_field_order == AV_FIELD_UNKNOWN && mov_field_order) {
-        av_log(NULL, AV_LOG_ERROR, "Unknown MOV field order 0x%04x\n", mov_field_order);
+        av_log(c->fc, AV_LOG_ERROR, "Unknown MOV field order 0x%04x\n", mov_field_order);
     }
     st->codecpar->field_order = decoded_field_order;
 
@@ -1798,19 +1798,19 @@ static int mov_read_aclr(MOVContext *c, AVIOContext *pb, MOVAtom atom)
                         par->color_range = AVCOL_RANGE_JPEG;
                         break;
                     default:
-                        av_log(c, AV_LOG_WARNING, "ignored unknown aclr value (%d)\n", range_value);
+                        av_log(c->fc, AV_LOG_WARNING, "ignored unknown aclr value (%d)\n", range_value);
                         break;
                     }
-                    ff_dlog(c, "color_range: %d\n", par->color_range);
+                    ff_dlog(c->fc, "color_range: %d\n", par->color_range);
                 } else {
                   /* For some reason the whole atom was not added to the extradata */
-                  av_log(c, AV_LOG_ERROR, "aclr not decoded - incomplete atom\n");
+                  av_log(c->fc, AV_LOG_ERROR, "aclr not decoded - incomplete atom\n");
                 }
             } else {
-                av_log(c, AV_LOG_ERROR, "aclr not decoded - unable to add atom to extradata\n");
+                av_log(c->fc, AV_LOG_ERROR, "aclr not decoded - unable to add atom to extradata\n");
             }
         } else {
-            av_log(c, AV_LOG_WARNING, "aclr not decoded - unexpected size %"PRId64"\n", atom.size);
+            av_log(c->fc, AV_LOG_WARNING, "aclr not decoded - unexpected size %"PRId64"\n", atom.size);
         }
     }
 
@@ -1902,7 +1902,7 @@ static int mov_read_glbl(MOVContext *c, AVIOContext *pb, MOVAtom atom)
             return mov_read_default(c, pb, atom);
     }
     if (st->codecpar->extradata_size > 1 && st->codecpar->extradata) {
-        av_log(c, AV_LOG_WARNING, "ignoring multiple glbl\n");
+        av_log(c->fc, AV_LOG_WARNING, "ignoring multiple glbl\n");
         return 0;
     }
     av_freep(&st->codecpar->extradata);
@@ -2959,11 +2959,45 @@ static int mov_read_stts(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     return 0;
 }
 
-static void mov_update_dts_shift(MOVStreamContext *sc, int duration)
+static int mov_read_sdtp(MOVContext *c, AVIOContext *pb, MOVAtom atom)
+{
+    AVStream *st;
+    MOVStreamContext *sc;
+    int64_t i, entries;
+
+    if (c->fc->nb_streams < 1)
+        return 0;
+    st = c->fc->streams[c->fc->nb_streams - 1];
+    sc = st->priv_data;
+
+    avio_r8(pb); /* version */
+    avio_rb24(pb); /* flags */
+    entries = atom.size - 4;
+
+    av_log(c->fc, AV_LOG_TRACE, "track[%u].sdtp.entries = %" PRId64 "\n",
+           c->fc->nb_streams - 1, entries);
+
+    if (sc->sdtp_data)
+        av_log(c->fc, AV_LOG_WARNING, "Duplicated SDTP atom\n");
+    av_freep(&sc->sdtp_data);
+    sc->sdtp_count = 0;
+
+    sc->sdtp_data = av_mallocz(entries);
+    if (!sc->sdtp_data)
+        return AVERROR(ENOMEM);
+
+    for (i = 0; i < entries && !pb->eof_reached; i++)
+        sc->sdtp_data[i] = avio_r8(pb);
+    sc->sdtp_count = i;
+
+    return 0;
+}
+
+static void mov_update_dts_shift(MOVStreamContext *sc, int duration, void *logctx)
 {
     if (duration < 0) {
         if (duration == INT_MIN) {
-            av_log(NULL, AV_LOG_WARNING, "mov_update_dts_shift(): dts_shift set to %d\n", INT_MAX);
+            av_log(logctx, AV_LOG_WARNING, "mov_update_dts_shift(): dts_shift set to %d\n", INT_MAX);
             duration++;
         }
         sc->dts_shift = FFMAX(sc->dts_shift, -duration);
@@ -3021,7 +3055,7 @@ static int mov_read_ctts(MOVContext *c, AVIOContext *pb, MOVAtom atom)
         }
 
         if (i+2<entries)
-            mov_update_dts_shift(sc, duration);
+            mov_update_dts_shift(sc, duration, c->fc);
     }
 
     sc->ctts_count = ctts_count;
@@ -4847,7 +4881,7 @@ static int mov_read_trun(MOVContext *c, AVIOContext *pb, MOVAtom atom)
         if (flags & MOV_TRUN_SAMPLE_FLAGS)    sample_flags    = avio_rb32(pb);
         if (flags & MOV_TRUN_SAMPLE_CTS)      ctts_duration   = avio_rb32(pb);
 
-        mov_update_dts_shift(sc, ctts_duration);
+        mov_update_dts_shift(sc, ctts_duration, c->fc);
         if (pts != AV_NOPTS_VALUE) {
             dts = pts - sc->dts_shift;
             if (flags & MOV_TRUN_SAMPLE_CTS) {
@@ -6767,6 +6801,7 @@ static const MOVParseTableEntry mov_default_parse_table[] = {
 { MKTAG('s','t','s','z'), mov_read_stsz }, /* sample size */
 { MKTAG('s','t','t','s'), mov_read_stts },
 { MKTAG('s','t','z','2'), mov_read_stsz }, /* compact sample size */
+{ MKTAG('s','d','t','p'), mov_read_sdtp }, /* independent and disposable samples */
 { MKTAG('t','k','h','d'), mov_read_tkhd }, /* track header */
 { MKTAG('t','f','d','t'), mov_read_tfdt },
 { MKTAG('t','f','h','d'), mov_read_tfhd }, /* track fragment header */
@@ -7231,6 +7266,7 @@ static int mov_read_close(AVFormatContext *s)
         av_freep(&sc->sample_sizes);
         av_freep(&sc->keyframes);
         av_freep(&sc->stts_data);
+        av_freep(&sc->sdtp_data);
         av_freep(&sc->stps_data);
         av_freep(&sc->elst_data);
         av_freep(&sc->rap_group);
@@ -7820,6 +7856,11 @@ static int mov_read_packet(AVFormatContext *s, AVPacket *pkt)
     }
     if (st->discard == AVDISCARD_ALL)
         goto retry;
+    if (sc->sdtp_data && sc->current_sample <= sc->sdtp_count) {
+        uint8_t sample_flags = sc->sdtp_data[sc->current_sample - 1];
+        uint8_t sample_is_depended_on = (sample_flags >> 2) & 0x3;
+        pkt->flags |= sample_is_depended_on == MOV_SAMPLE_DEPENDENCY_NO ? AV_PKT_FLAG_DISPOSABLE : 0;
+    }
     pkt->flags |= sample->flags & AVINDEX_KEYFRAME ? AV_PKT_FLAG_KEY : 0;
     pkt->pos = sample->pos;
 

@@ -347,8 +347,11 @@ static av_cold int vpx_free(AVCodecContext *avctx)
 #endif
 
     vpx_codec_destroy(&ctx->encoder);
-    if (ctx->is_alpha)
+    if (ctx->is_alpha) {
         vpx_codec_destroy(&ctx->encoder_alpha);
+        av_freep(&ctx->rawimg_alpha.planes[VPX_PLANE_U]);
+        av_freep(&ctx->rawimg_alpha.planes[VPX_PLANE_V]);
+    }
     av_freep(&ctx->twopass_stats.buf);
     av_freep(&avctx->stats_out);
     free_frame_list(ctx->coded_frame_list);
@@ -515,6 +518,66 @@ static void set_color_range(AVCodecContext *avctx)
 #endif
 #endif
 
+/**
+ * Set the target bitrate to VPX library default. Also set CRF to 32 if needed.
+ */
+static void set_vp8_defaults(AVCodecContext *avctx,
+                             struct vpx_codec_enc_cfg *enccfg)
+{
+    VPxContext *ctx = avctx->priv_data;
+    av_assert0(!avctx->bit_rate);
+    avctx->bit_rate = enccfg->rc_target_bitrate * 1000;
+    if (enccfg->rc_end_usage == VPX_CQ) {
+        av_log(avctx, AV_LOG_WARNING,
+               "Bitrate not specified for constrained quality mode, using default of %dkbit/sec\n",
+               enccfg->rc_target_bitrate);
+    } else {
+        enccfg->rc_end_usage = VPX_CQ;
+        ctx->crf = 32;
+        av_log(avctx, AV_LOG_WARNING,
+               "Neither bitrate nor constrained quality specified, using default CRF of %d and bitrate of %dkbit/sec\n",
+               ctx->crf, enccfg->rc_target_bitrate);
+    }
+}
+
+
+#if CONFIG_LIBVPX_VP9_ENCODER
+/**
+ * Keep the target bitrate at 0 to engage constant quality mode. If CRF is not
+ * set, use 32.
+ */
+static void set_vp9_defaults(AVCodecContext *avctx,
+                             struct vpx_codec_enc_cfg *enccfg)
+{
+    VPxContext *ctx = avctx->priv_data;
+    av_assert0(!avctx->bit_rate);
+    if (enccfg->rc_end_usage != VPX_Q && ctx->lossless < 0) {
+        enccfg->rc_end_usage = VPX_Q;
+        ctx->crf = 32;
+        av_log(avctx, AV_LOG_WARNING,
+               "Neither bitrate nor constrained quality specified, using default CRF of %d\n",
+               ctx->crf);
+    }
+}
+#endif
+
+/**
+ * Called when the bitrate is not set. It sets appropriate default values for
+ * bitrate and CRF.
+ */
+static void set_vpx_defaults(AVCodecContext *avctx,
+                             struct vpx_codec_enc_cfg *enccfg)
+{
+    av_assert0(!avctx->bit_rate);
+#if CONFIG_LIBVPX_VP9_ENCODER
+    if (avctx->codec_id == AV_CODEC_ID_VP9) {
+        set_vp9_defaults(avctx, enccfg);
+        return;
+    }
+#endif
+    set_vp8_defaults(avctx, enccfg);
+}
+
 static av_cold int vpx_init(AVCodecContext *avctx,
                             const struct vpx_codec_iface *iface)
 {
@@ -585,18 +648,9 @@ static av_cold int vpx_init(AVCodecContext *avctx,
     if (avctx->bit_rate) {
         enccfg.rc_target_bitrate = av_rescale_rnd(avctx->bit_rate, 1, 1000,
                                                   AV_ROUND_NEAR_INF);
-#if CONFIG_LIBVPX_VP9_ENCODER
-    } else if (enccfg.rc_end_usage == VPX_Q) {
-#endif
     } else {
-        if (enccfg.rc_end_usage == VPX_CQ) {
-            enccfg.rc_target_bitrate = 1000000;
-        } else {
-            avctx->bit_rate = enccfg.rc_target_bitrate * 1000;
-            av_log(avctx, AV_LOG_WARNING,
-                   "Neither bitrate nor constrained quality specified, using default bitrate of %dkbit/sec\n",
-                   enccfg.rc_target_bitrate);
-        }
+        // Set bitrate to default value. Also sets CRF to default if needed.
+        set_vpx_defaults(avctx, &enccfg);
     }
 
     if (avctx->codec_id == AV_CODEC_ID_VP9 && ctx->lossless == 1) {
@@ -820,10 +874,6 @@ FF_ENABLE_DEPRECATION_WARNINGS
     if (avctx->codec_id == AV_CODEC_ID_VP9 && (codec_caps & VPX_CODEC_CAP_HIGHBITDEPTH))
         ctx->rawimg.bit_depth = enccfg.g_bit_depth;
 #endif
-
-    if (ctx->is_alpha)
-        vpx_img_wrap(&ctx->rawimg_alpha, VPX_IMG_FMT_I420, avctx->width, avctx->height, 1,
-                     (unsigned char*)1);
 
     cpb_props = ff_add_cpb_side_data(avctx);
     if (!cpb_props)
@@ -1241,6 +1291,34 @@ static int vp8_encode_set_roi(AVCodecContext *avctx, int frame_width, int frame_
     return ret;
 }
 
+static int realloc_alpha_uv(AVCodecContext *avctx, int width, int height)
+{
+    VPxContext *ctx = avctx->priv_data;
+    struct vpx_image *rawimg_alpha = &ctx->rawimg_alpha;
+    unsigned char **planes = rawimg_alpha->planes;
+    int *stride = rawimg_alpha->stride;
+
+    if (!planes[VPX_PLANE_U] ||
+        !planes[VPX_PLANE_V] ||
+        width  != (int)rawimg_alpha->d_w ||
+        height != (int)rawimg_alpha->d_h) {
+        av_freep(&planes[VPX_PLANE_U]);
+        av_freep(&planes[VPX_PLANE_V]);
+
+        vpx_img_wrap(rawimg_alpha, VPX_IMG_FMT_I420, width, height, 1,
+                     (unsigned char*)1);
+        planes[VPX_PLANE_U] = av_malloc_array(stride[VPX_PLANE_U], height);
+        planes[VPX_PLANE_V] = av_malloc_array(stride[VPX_PLANE_V], height);
+        if (!planes[VPX_PLANE_U] || !planes[VPX_PLANE_V])
+            return AVERROR(ENOMEM);
+
+        memset(planes[VPX_PLANE_U], 0x80, stride[VPX_PLANE_U] * height);
+        memset(planes[VPX_PLANE_V], 0x80, stride[VPX_PLANE_V] * height);
+    }
+
+    return 0;
+}
+
 static int vpx_encode(AVCodecContext *avctx, AVPacket *pkt,
                       const AVFrame *frame, int *got_packet)
 {
@@ -1261,23 +1339,12 @@ static int vpx_encode(AVCodecContext *avctx, AVPacket *pkt,
         rawimg->stride[VPX_PLANE_U] = frame->linesize[1];
         rawimg->stride[VPX_PLANE_V] = frame->linesize[2];
         if (ctx->is_alpha) {
-            uint8_t *u_plane, *v_plane;
             rawimg_alpha = &ctx->rawimg_alpha;
+            res = realloc_alpha_uv(avctx, frame->width, frame->height);
+            if (res < 0)
+                return res;
             rawimg_alpha->planes[VPX_PLANE_Y] = frame->data[3];
-            u_plane = av_malloc(frame->linesize[1] * frame->height);
-            v_plane = av_malloc(frame->linesize[2] * frame->height);
-            if (!u_plane || !v_plane) {
-                av_free(u_plane);
-                av_free(v_plane);
-                return AVERROR(ENOMEM);
-            }
-            memset(u_plane, 0x80, frame->linesize[1] * frame->height);
-            rawimg_alpha->planes[VPX_PLANE_U] = u_plane;
-            memset(v_plane, 0x80, frame->linesize[2] * frame->height);
-            rawimg_alpha->planes[VPX_PLANE_V] = v_plane;
-            rawimg_alpha->stride[VPX_PLANE_Y] = frame->linesize[0];
-            rawimg_alpha->stride[VPX_PLANE_U] = frame->linesize[1];
-            rawimg_alpha->stride[VPX_PLANE_V] = frame->linesize[2];
+            rawimg_alpha->stride[VPX_PLANE_Y] = frame->linesize[3];
         }
         timestamp                   = frame->pts;
 #if VPX_IMAGE_ABI_VERSION >= 4
@@ -1339,11 +1406,6 @@ static int vpx_encode(AVCodecContext *avctx, AVPacket *pkt,
                          ctx->twopass_stats.sz);
     }
 
-    if (rawimg_alpha) {
-        av_freep(&rawimg_alpha->planes[VPX_PLANE_U]);
-        av_freep(&rawimg_alpha->planes[VPX_PLANE_V]);
-    }
-
     *got_packet = !!coded_size;
     return 0;
 }
@@ -1372,7 +1434,7 @@ static int vpx_encode(AVCodecContext *avctx, AVPacket *pkt,
     { "default",         "Improve resiliency against losses of whole frames", 0, AV_OPT_TYPE_CONST, {.i64 = VPX_ERROR_RESILIENT_DEFAULT}, 0, 0, VE, "er"}, \
     { "partitions",      "The frame partitions are independently decodable " \
                          "by the bool decoder, meaning that partitions can be decoded even " \
-                         "though earlier partitions have been lost. Note that intra predicition" \
+                         "though earlier partitions have been lost. Note that intra prediction" \
                          " is still done over the partition boundary.",       0, AV_OPT_TYPE_CONST, {.i64 = VPX_ERROR_RESILIENT_PARTITIONS}, 0, 0, VE, "er"}, \
     { "crf",              "Select the quality for constant quality mode", offsetof(VPxContext, crf), AV_OPT_TYPE_INT, {.i64 = -1}, -1, 63, VE }, \
     { "static-thresh",    "A change threshold on blocks below which they will be skipped by the encoder", OFFSET(static_thresh), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, VE }, \
@@ -1459,6 +1521,7 @@ static const AVOption vp9_options[] = {
 #undef LEGACY_OPTIONS
 
 static const AVCodecDefault defaults[] = {
+    { "b",                 "0" },
     { "qmin",             "-1" },
     { "qmax",             "-1" },
     { "g",                "-1" },

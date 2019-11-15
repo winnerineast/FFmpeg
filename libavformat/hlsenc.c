@@ -478,6 +478,12 @@ static void reflush_dynbuf(VariantStream *vs, int *range_length)
     avio_write(vs->out, vs->temp_buffer, *range_length);;
 }
 
+#if HAVE_DOS_PATHS
+#define SEPARATOR '\\'
+#else
+#define SEPARATOR '/'
+#endif
+
 static int hls_delete_old_segments(AVFormatContext *s, HLSContext *hls,
                                    VariantStream *vs)
 {
@@ -486,9 +492,12 @@ static int hls_delete_old_segments(AVFormatContext *s, HLSContext *hls,
     float playlist_duration = 0.0f;
     int ret = 0, path_size, sub_path_size;
     int segment_cnt = 0;
-    char *dirname = NULL, *p, *sub_path;
+    char *dirname = NULL, *sub_path;
+    char *dirname_r = NULL;
+    char *dirname_repl = NULL;
     char *path = NULL;
     char *vtt_dirname = NULL;
+    char *vtt_dirname_r = NULL;
     AVDictionary *options = NULL;
     AVIOContext *out = NULL;
     const char *proto = NULL;
@@ -517,39 +526,33 @@ static int hls_delete_old_segments(AVFormatContext *s, HLSContext *hls,
     }
 
     if (segment && !hls->use_localtime_mkdir) {
-        dirname = hls->segment_filename ? av_strdup(hls->segment_filename): av_strdup(vs->avf->url);
-        if (!dirname) {
-            ret = AVERROR(ENOMEM);
-            goto fail;
-        }
-        p = (char *)av_basename(dirname);
-        *p = '\0';
+        dirname_r = hls->segment_filename ? av_strdup(hls->segment_filename): av_strdup(vs->avf->url);
+        dirname = (char*)av_dirname(dirname_r);
     }
 
     /* if %v is present in the file's directory
      * all segment belongs to the same variant, so do it only once before the loop*/
     if (dirname && av_stristr(dirname, "%v")) {
-        char * r_dirname = dirname;
+        char * dirname_repl = dirname;
         if (!vs->varname) {
-            if (replace_int_data_in_filename(&r_dirname, dirname, 'v', segment->var_stream_idx) < 1) {
+            if (replace_int_data_in_filename(&dirname_repl, dirname, 'v', segment->var_stream_idx) < 1) {
                 ret = AVERROR(EINVAL);
                 goto fail;
             }
         } else {
-            if (replace_str_data_in_filename(&r_dirname, dirname, 'v', vs->varname) < 1) {
+            if (replace_str_data_in_filename(&dirname_repl, dirname, 'v', vs->varname) < 1) {
                 ret = AVERROR(EINVAL);
                 goto fail;
             }
         }
 
-        av_free(dirname);
-        dirname = r_dirname;
+        dirname = dirname_repl;
     }
 
     while (segment) {
         av_log(hls, AV_LOG_DEBUG, "deleting old segment %s\n",
                segment->filename);
-        path_size =  (hls->use_localtime_mkdir ? 0 : strlen(dirname)) + strlen(segment->filename) + 1;
+        path_size =  (hls->use_localtime_mkdir ? 0 : strlen(dirname)+1) + strlen(segment->filename) + 1;
         path = av_malloc(path_size);
         if (!path) {
             ret = AVERROR(ENOMEM);
@@ -559,8 +562,7 @@ static int hls_delete_old_segments(AVFormatContext *s, HLSContext *hls,
         if (hls->use_localtime_mkdir)
             av_strlcpy(path, segment->filename, path_size);
         else { // segment->filename contains basename only
-            av_strlcpy(path, dirname, path_size);
-            av_strlcat(path, segment->filename, path_size);
+            snprintf(path, path_size, "%s%c%s", dirname, SEPARATOR, segment->filename);
         }
 
         proto = avio_find_protocol_name(s->url);
@@ -578,29 +580,25 @@ static int hls_delete_old_segments(AVFormatContext *s, HLSContext *hls,
         }
 
         if ((segment->sub_filename[0] != '\0')) {
-            vtt_dirname = av_strdup(vs->vtt_avf->url);
-            if (!vtt_dirname) {
-                ret = AVERROR(ENOMEM);
-                goto fail;
-            }
-            p = (char *)av_basename(vtt_dirname);
-            *p = '\0';
-            sub_path_size = strlen(segment->sub_filename) + 1 + strlen(vtt_dirname);
+            vtt_dirname_r = av_strdup(vs->vtt_avf->url);
+            vtt_dirname = (char*)av_dirname(vtt_dirname_r);
+            sub_path_size = strlen(segment->sub_filename) + 1 + strlen(vtt_dirname) + 1;
             sub_path = av_malloc(sub_path_size);
             if (!sub_path) {
                 ret = AVERROR(ENOMEM);
                 goto fail;
             }
 
-            av_strlcpy(sub_path, vtt_dirname, sub_path_size);
-            av_strlcat(sub_path, segment->sub_filename, sub_path_size);
+            snprintf(sub_path, sub_path_size, "%s%c%s", vtt_dirname, SEPARATOR, segment->sub_filename);
+
+            av_freep(&vtt_dirname_r);
 
             if (hls->method || (proto && !av_strcasecmp(proto, "http"))) {
                 av_dict_set(&options, "method", "DELETE", 0);
                 if ((ret = vs->vtt_avf->io_open(vs->vtt_avf, &out, sub_path, AVIO_FLAG_WRITE, &options)) < 0) {
                     if (hls->ignore_io_errors)
                         ret = 0;
-                    av_free(sub_path);
+                    av_freep(&sub_path);
                     goto fail;
                 }
                 ff_format_io_close(vs->vtt_avf, &out);
@@ -608,18 +606,19 @@ static int hls_delete_old_segments(AVFormatContext *s, HLSContext *hls,
                 av_log(hls, AV_LOG_ERROR, "failed to delete old segment %s: %s\n",
                        sub_path, strerror(errno));
             }
-            av_free(sub_path);
+            av_freep(&sub_path);
         }
         av_freep(&path);
         previous_segment = segment;
         segment = previous_segment->next;
-        av_free(previous_segment);
+        av_freep(&previous_segment);
     }
 
 fail:
-    av_free(path);
-    av_free(dirname);
-    av_free(vtt_dirname);
+    av_freep(&path);
+    av_freep(&dirname_r);
+    av_freep(&dirname_repl);
+    av_freep(&vtt_dirname_r);
 
     return ret;
 }
@@ -897,7 +896,6 @@ static int sls_flags_filename_process(struct AVFormatContext *s, HLSContext *hls
         strlen(vs->current_segment_final_filename_fmt)) {
         char * new_url = av_strdup(vs->current_segment_final_filename_fmt);
         if (!new_url) {
-            av_free(en);
             return AVERROR(ENOMEM);
         }
         ff_format_set_url(vs->avf, new_url);
@@ -908,8 +906,7 @@ static int sls_flags_filename_process(struct AVFormatContext *s, HLSContext *hls
                        "Invalid second level segment filename template '%s', "
                        "you can try to remove second_level_segment_size flag\n",
                        vs->avf->url);
-                av_free(filename);
-                av_free(en);
+                av_freep(&filename);
                 return AVERROR(EINVAL);
             }
             ff_format_set_url(vs->avf, filename);
@@ -922,8 +919,7 @@ static int sls_flags_filename_process(struct AVFormatContext *s, HLSContext *hls
                        "Invalid second level segment filename template '%s', "
                        "you can try to remove second_level_segment_time flag\n",
                        vs->avf->url);
-                av_free(filename);
-                av_free(en);
+                av_freep(&filename);
                 return AVERROR(EINVAL);
             }
             ff_format_set_url(vs->avf, filename);
@@ -995,7 +991,7 @@ static int sls_flag_use_localtime_filename(AVFormatContext *oc, HLSContext *c, V
             av_log(c, AV_LOG_ERROR, "Invalid second level segment filename template '%s', "
                     "you can try to remove second_level_segment_index flag\n",
                    oc->url);
-            av_free(filename);
+            av_freep(&filename);
             return AVERROR(EINVAL);
         }
         ff_format_set_url(oc, filename);
@@ -1009,7 +1005,7 @@ static int sls_flag_use_localtime_filename(AVFormatContext *oc, HLSContext *c, V
                 av_log(c, AV_LOG_ERROR, "Invalid second level segment filename template '%s', "
                         "you can try to remove second_level_segment_size flag\n",
                        oc->url);
-                av_free(filename);
+                av_freep(&filename);
                 return AVERROR(EINVAL);
             }
             ff_format_set_url(oc, filename);
@@ -1020,7 +1016,7 @@ static int sls_flag_use_localtime_filename(AVFormatContext *oc, HLSContext *c, V
                 av_log(c, AV_LOG_ERROR, "Invalid second level segment filename template '%s', "
                         "you can try to remove second_level_segment_time flag\n",
                        oc->url);
-                av_free(filename);
+                av_freep(&filename);
                 return AVERROR(EINVAL);
             }
             ff_format_set_url(oc, filename);
@@ -1045,6 +1041,7 @@ static int hls_append_segment(struct AVFormatContext *s, HLSContext *hls,
     en->var_stream_idx = vs->var_stream_idx;
     ret = sls_flags_filename_process(s, hls, vs, en, duration, pos, size);
     if (ret < 0) {
+        av_freep(&en);
         return ret;
     }
 
@@ -1108,7 +1105,7 @@ static int hls_append_segment(struct AVFormatContext *s, HLSContext *hls,
             if ((ret = hls_delete_old_segments(s, hls, vs)) < 0)
                 return ret;
         } else
-            av_free(en);
+            av_freep(&en);
     } else
         vs->nb_entries++;
 
@@ -1217,7 +1214,7 @@ static void hls_free_segments(HLSSegment *p)
     while (p) {
         en = p;
         p = p->next;
-        av_free(en);
+        av_freep(&en);
     }
 }
 
@@ -1305,7 +1302,7 @@ static int create_master_playlist(AVFormatContext *s,
     ret = hlsenc_io_open(s, &hls->m3u8_out, temp_filename, &options);
     av_dict_free(&options);
     if (ret < 0) {
-        av_log(NULL, AV_LOG_ERROR, "Failed to open master play list file '%s'\n",
+        av_log(s, AV_LOG_ERROR, "Failed to open master play list file '%s'\n",
                 temp_filename);
         goto fail;
     }
@@ -1344,7 +1341,7 @@ static int create_master_playlist(AVFormatContext *s,
 
         m3u8_rel_name = get_relative_url(hls->master_m3u8_url, vs->m3u8_name);
         if (!m3u8_rel_name) {
-            av_log(NULL, AV_LOG_ERROR, "Unable to find relative URL\n");
+            av_log(s, AV_LOG_ERROR, "Unable to find relative URL\n");
             goto fail;
         }
 
@@ -1358,7 +1355,7 @@ static int create_master_playlist(AVFormatContext *s,
         }
 
         if (!vid_st && !aud_st) {
-            av_log(NULL, AV_LOG_WARNING, "Media stream not found\n");
+            av_log(s, AV_LOG_WARNING, "Media stream not found\n");
             continue;
         }
 
@@ -1399,7 +1396,7 @@ static int create_master_playlist(AVFormatContext *s,
                 }
             }
             if (j == hls->nb_ccstreams)
-                av_log(NULL, AV_LOG_WARNING, "mapping ccgroup %s not found\n",
+                av_log(s, AV_LOG_WARNING, "mapping ccgroup %s not found\n",
                         vs->ccgroup);
         }
 
@@ -1584,7 +1581,7 @@ static int hls_start(AVFormatContext *s, VariantStream *vs)
 #else
             vs->basename, 'd', vs->sequence) < 1) {
 #endif
-                av_free(filename);
+                av_freep(&filename);
                 av_log(oc, AV_LOG_ERROR, "Invalid segment filename template '%s', you can try to use -strftime 1 with it\n", vs->basename);
                 return AVERROR(EINVAL);
         }
@@ -1613,16 +1610,13 @@ static int hls_start(AVFormatContext *s, VariantStream *vs)
             if (c->use_localtime_mkdir) {
                 const char *dir;
                 char *fn_copy = av_strdup(oc->url);
-                if (!fn_copy) {
-                    return AVERROR(ENOMEM);
-                }
                 dir = av_dirname(fn_copy);
                 if (ff_mkdir_p(dir) == -1 && errno != EEXIST) {
                     av_log(oc, AV_LOG_ERROR, "Could not create directory %s with use_localtime_mkdir\n", dir);
-                    av_free(fn_copy);
+                    av_freep(&fn_copy);
                     return AVERROR(errno);
                 }
-                av_free(fn_copy);
+                av_freep(&fn_copy);
             }
         } else {
             char *filename = NULL;
@@ -1632,7 +1626,7 @@ static int hls_start(AVFormatContext *s, VariantStream *vs)
 #else
                    vs->basename, 'd', vs->sequence) < 1) {
 #endif
-                av_free(filename);
+                av_freep(&filename);
                 av_log(oc, AV_LOG_ERROR, "Invalid segment filename template '%s' you can try to use -strftime 1 with it\n", vs->basename);
                 return AVERROR(EINVAL);
             }
@@ -1646,7 +1640,7 @@ static int hls_start(AVFormatContext *s, VariantStream *vs)
 #else
                 vs->vtt_basename, 'd', vs->sequence) < 1) {
 #endif
-                av_free(filename);
+                av_freep(&filename);
                 av_log(vtt_oc, AV_LOG_ERROR, "Invalid segment filename template '%s'\n", vs->vtt_basename);
                 return AVERROR(EINVAL);
             }
@@ -1784,11 +1778,6 @@ static int validate_name(int nb_vs, const char *fn)
     }
 
     fn_dup = av_strdup(fn);
-    if (!fn_dup) {
-        ret = AVERROR(ENOMEM);
-        goto fail;
-    }
-
     filename = av_basename(fn);
     subdir_name = av_dirname(fn_dup);
 
@@ -1846,11 +1835,6 @@ static int format_name(const char *buf, char **s, int index, const char *varname
     /* if %v is present in the file's directory, create sub-directory */
     if (av_stristr(dir, "%v") && proto && !strcmp(proto, "file")) {
         mod_buf_dup = av_strdup(*s);
-        if (!mod_buf_dup) {
-            ret = AVERROR(ENOMEM);
-            goto fail;
-        }
-
         dir = av_dirname(mod_buf_dup);
         if (ff_mkdir_p(dir) == -1 && errno != EEXIST) {
             ret = AVERROR(errno);
@@ -1907,6 +1891,9 @@ static int parse_variant_stream_mapstring(AVFormatContext *s)
      * agroup: is key to specify audio group. A string can be given as value.
      */
     p = av_strdup(hls->var_stream_map);
+    if (!p)
+        return AVERROR(ENOMEM);
+
     q = p;
     while (av_strtok(q, " \t", &saveptr1)) {
         q = NULL;
@@ -2028,6 +2015,9 @@ static int parse_cc_stream_mapstring(AVFormatContext *s)
     ClosedCaptionsStream *ccs;
 
     p = av_strdup(hls->cc_stream_map);
+    if(!p)
+        return AVERROR(ENOMEM);
+
     q = p;
     while (av_strtok(q, " \t", &saveptr1)) {
         q = NULL;
@@ -2124,7 +2114,7 @@ static int update_variant_stream_info(AVFormatContext *s)
         hls->var_streams[0].streams = av_mallocz(sizeof(AVStream *) *
                                             hls->var_streams[0].nb_streams);
         if (!hls->var_streams[0].streams) {
-            av_free(hls->var_streams);
+            av_freep(&hls->var_streams);
             return AVERROR(ENOMEM);
         }
 
@@ -2132,7 +2122,7 @@ static int update_variant_stream_info(AVFormatContext *s)
         if (hls->nb_ccstreams) {
             hls->var_streams[0].ccgroup = av_strdup(hls->cc_streams[0].ccgroup);
             if (!hls->var_streams[0].ccgroup) {
-                av_free(hls->var_streams);
+                av_freep(&hls->var_streams);
                 return AVERROR(ENOMEM);
             }
         }
@@ -2151,11 +2141,6 @@ static int update_master_pl_info(AVFormatContext *s)
     int ret = 0;
 
     fn1 = av_strdup(s->url);
-    if (!fn1) {
-        ret = AVERROR(ENOMEM);
-        goto fail;
-    }
-
     dir = av_dirname(fn1);
 
     /**
@@ -2164,10 +2149,6 @@ static int update_master_pl_info(AVFormatContext *s)
      */
     if (dir && av_stristr(av_basename(dir), "%v")) {
         fn2 = av_strdup(dir);
-        if (!fn2) {
-            ret = AVERROR(ENOMEM);
-            goto fail;
-        }
         dir = av_dirname(fn2);
     }
 
@@ -2338,7 +2319,7 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
             if (!vs->init_range_length) {
                 range_length = avio_close_dyn_buf(oc->pb, &buffer);
                 avio_write(vs->out, buffer, range_length);
-                av_free(buffer);
+                av_freep(&buffer);
                 vs->init_range_length = range_length;
                 avio_open_dyn_buf(&oc->pb);
                 vs->packets_written = 0;
@@ -2407,8 +2388,8 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
                     reflush_dynbuf(vs, &range_length);
                     ret = hlsenc_io_close(s, &vs->out, filename);
                 }
-                av_free(vs->temp_buffer);
-                av_free(filename);
+                av_freep(&vs->temp_buffer);
+                av_freep(&filename);
             }
         }
 
@@ -2426,7 +2407,7 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
             vs->end_pts = pkt->pts;
             vs->duration = 0;
             if (ret < 0) {
-                av_free(old_filename);
+                av_freep(&old_filename);
                 return ret;
             }
         }
@@ -2438,7 +2419,7 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
                 ff_format_io_close(s, &vs->out);
                 vs->out = NULL;
                 if ((ret = hls_window(s, 0, vs)) < 0) {
-                    av_free(old_filename);
+                    av_freep(&old_filename);
                     return ret;
                 }
             }
@@ -2464,7 +2445,7 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
             sls_flag_file_rename(hls, vs, old_filename);
             ret = hls_start(s, vs);
         }
-        av_free(old_filename);
+        av_freep(&old_filename);
 
         if (ret < 0) {
             return ret;
@@ -2551,7 +2532,7 @@ static int hls_write_trailer(struct AVFormatContext *s)
             filename = av_asprintf("%s", oc->url);
         }
         if (!filename) {
-            av_free(old_filename);
+            av_freep(&old_filename);
             return AVERROR(ENOMEM);
         }
 
@@ -2564,7 +2545,7 @@ static int hls_write_trailer(struct AVFormatContext *s)
 
                 range_length = avio_close_dyn_buf(oc->pb, &buffer);
                 avio_write(vs->out, buffer, range_length);
-                av_free(buffer);
+                av_freep(&buffer);
                 vs->init_range_length = range_length;
                 avio_open_dyn_buf(&oc->pb);
                 vs->packets_written = 0;
@@ -2606,10 +2587,10 @@ static int hls_write_trailer(struct AVFormatContext *s)
             if (ret < 0)
                 av_log(s, AV_LOG_WARNING, "Failed to upload file '%s' at the end.\n", oc->url);
         }
-        av_free(vs->temp_buffer);
+        av_freep(&vs->temp_buffer);
 
 failed:
-        av_free(filename);
+        av_freep(&filename);
         av_write_trailer(oc);
         if (oc->url[0]) {
             proto = avio_find_protocol_name(oc->url);
@@ -2619,7 +2600,7 @@ failed:
         // rename that segment from .tmp to the real one
         if (use_temp_file && !(hls->flags & HLS_SINGLE_FILE)) {
             hls_rename_temp_file(s, oc);
-            av_free(old_filename);
+            av_freep(&old_filename);
             old_filename = av_strdup(oc->url);
 
             if (!old_filename) {
