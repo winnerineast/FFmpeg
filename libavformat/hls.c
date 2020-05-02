@@ -118,6 +118,8 @@ struct playlist {
     int needed;
     int broken;
     int cur_seq_no;
+    int last_seq_no;
+    int m3u8_hold_counters;
     int64_t cur_seg_offset;
     int64_t last_load_time;
 
@@ -198,6 +200,7 @@ typedef struct HLSContext {
     struct rendition **renditions;
 
     int cur_seq_no;
+    int m3u8_hold_counters;
     int live_start_index;
     int first_packet;
     int64_t first_timestamp;
@@ -400,8 +403,7 @@ static struct segment *new_init_section(struct playlist *pls,
                                         const char *url_base)
 {
     struct segment *sec;
-    char *ptr;
-    char tmp_str[MAX_URL_SIZE];
+    char tmp_str[MAX_URL_SIZE], *ptr = tmp_str;
 
     if (!info->uri[0])
         return NULL;
@@ -410,8 +412,12 @@ static struct segment *new_init_section(struct playlist *pls,
     if (!sec)
         return NULL;
 
-    ff_make_absolute_url(tmp_str, sizeof(tmp_str), url_base, info->uri);
-    sec->url = av_strdup(tmp_str);
+    if (!av_strncasecmp(info->uri, "data:", 5)) {
+        ptr = info->uri;
+    } else {
+        ff_make_absolute_url(tmp_str, sizeof(tmp_str), url_base, info->uri);
+    }
+    sec->url = av_strdup(ptr);
     if (!sec->url) {
         av_free(sec);
         return NULL;
@@ -624,6 +630,9 @@ static int open_url(AVFormatContext *s, AVIOContext **pb, const char *url,
     if (av_strstart(url, "crypto", NULL)) {
         if (url[6] == '+' || url[6] == ':')
             proto_name = avio_find_protocol_name(url + 7);
+    } else if (av_strstart(url, "data", NULL)) {
+        if (url[4] == '+' || url[4] == ':')
+            proto_name = avio_find_protocol_name(url + 5);
     }
 
     if (!proto_name)
@@ -643,12 +652,16 @@ static int open_url(AVFormatContext *s, AVIOContext **pb, const char *url,
         }
     } else if (av_strstart(proto_name, "http", NULL)) {
         is_http = 1;
+    } else if (av_strstart(proto_name, "data", NULL)) {
+        ;
     } else
         return AVERROR_INVALIDDATA;
 
     if (!strncmp(proto_name, url, strlen(proto_name)) && url[strlen(proto_name)] == ':')
         ;
     else if (av_strstart(url, "crypto", NULL) && !strncmp(proto_name, url + 7, strlen(proto_name)) && url[7 + strlen(proto_name)] == ':')
+        ;
+    else if (av_strstart(url, "data", NULL) && !strncmp(proto_name, url + 5, strlen(proto_name)) && url[5 + strlen(proto_name)] == ':')
         ;
     else if (strcmp(proto_name, "file") || !strncmp(url, "file,", 5))
         return AVERROR_INVALIDDATA;
@@ -1428,6 +1441,17 @@ reload:
                    v->start_seq_no - v->cur_seq_no);
             v->cur_seq_no = v->start_seq_no;
         }
+        if (v->cur_seq_no > v->last_seq_no) {
+            v->last_seq_no = v->cur_seq_no;
+            v->m3u8_hold_counters = 0;
+        } else if (v->last_seq_no == v->cur_seq_no) {
+            v->m3u8_hold_counters++;
+            if (v->m3u8_hold_counters >= c->m3u8_hold_counters) {
+                return AVERROR_EOF;
+            }
+        } else {
+            av_log(v->parent, AV_LOG_WARNING, "maybe the m3u8 list sequence have been wraped.\n");
+        }
         if (v->cur_seq_no >= v->start_seq_no + v->n_segments) {
             if (v->finished)
                 return AVERROR_EOF;
@@ -1649,7 +1673,7 @@ static int save_avio_options(AVFormatContext *s)
 {
     HLSContext *c = s->priv_data;
     static const char * const opts[] = {
-        "headers", "http_proxy", "user_agent", "cookies", "referer", "rw_timeout", NULL };
+        "headers", "http_proxy", "user_agent", "cookies", "referer", "rw_timeout", "icy", NULL };
     const char * const * opt = opts;
     uint8_t *buf;
     int ret = 0;
@@ -1816,6 +1840,7 @@ static int hls_read_header(AVFormatContext *s)
     if (c->n_playlists > 1 || c->playlists[0]->n_segments == 0) {
         for (i = 0; i < c->n_playlists; i++) {
             struct playlist *pls = c->playlists[i];
+            pls->m3u8_hold_counters = 0;
             if ((ret = parse_playlist(c, pls->url, pls, NULL)) < 0) {
                 av_log(s, AV_LOG_WARNING, "parse_playlist error %s [%s]\n", av_err2str(ret), pls->url);
                 pls->broken = 1;
@@ -2186,9 +2211,8 @@ static int hls_read_packet(AVFormatContext *s, AVPacket *pkt)
         ist = pls->ctx->streams[pls->pkt.stream_index];
         st = pls->main_streams[pls->pkt.stream_index];
 
-        *pkt = pls->pkt;
+        av_packet_move_ref(pkt, &pls->pkt);
         pkt->stream_index = st->index;
-        reset_packet(&c->playlists[minplaylist]->pkt);
 
         if (pkt->dts != AV_NOPTS_VALUE)
             c->cur_timestamp = av_rescale_q(pkt->dts,
@@ -2200,7 +2224,6 @@ static int hls_read_packet(AVFormatContext *s, AVPacket *pkt)
         if (ist->codecpar->codec_id != st->codecpar->codec_id) {
             ret = set_stream_info_from_input_stream(st, pls, ist);
             if (ret < 0) {
-                av_packet_unref(pkt);
                 return ret;
             }
         }
@@ -2317,6 +2340,8 @@ static const AVOption hls_options[] = {
         INT_MIN, INT_MAX, FLAGS},
     {"max_reload", "Maximum number of times a insufficient list is attempted to be reloaded",
         OFFSET(max_reload), AV_OPT_TYPE_INT, {.i64 = 1000}, 0, INT_MAX, FLAGS},
+    {"m3u8_hold_counters", "The maximum number of times to load m3u8 when it refreshes without new segments",
+        OFFSET(m3u8_hold_counters), AV_OPT_TYPE_INT, {.i64 = 1000}, 0, INT_MAX, FLAGS},
     {"http_persistent", "Use persistent HTTP connections",
         OFFSET(http_persistent), AV_OPT_TYPE_BOOL, {.i64 = 1}, 0, 1, FLAGS },
     {"http_multiple", "Use multiple HTTP connections for fetching segments",
